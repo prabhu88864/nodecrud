@@ -9,9 +9,10 @@ const userProfileSchema = new mongoose.Schema({
   occupation: String,
   emergencyContact: String,
 
-  idProofType: { type: String, enum: ['Aadhar', 'PAN', 'Passport', 'DrivingLicense', 'Other'] },
+  idProofType: { type: String},
  
   idProofImage: String, 
+  userImage: String,
 
   roomNumber: String,
   rentAmount: Number,
