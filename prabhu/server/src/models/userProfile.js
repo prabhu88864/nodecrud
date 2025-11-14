@@ -21,6 +21,8 @@ const userProfileSchema = new mongoose.Schema({
   joinedDate: { type: Date, default: Date.now },
 
   isActive: { type: Boolean, default: true },
+  allocatedRoom: { type: mongoose.Schema.Types.ObjectId, ref: "Room" },
+  allocatedBed: { type: mongoose.Schema.Types.ObjectId, ref: "Bed" },
   createdAt: { type: Date, default: Date.now }
 });
 
