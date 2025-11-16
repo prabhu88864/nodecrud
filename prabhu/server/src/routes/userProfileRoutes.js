@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import upload from '../middleware/upload.js';
 import UserProfile from '../models/userProfile.js';
+import Bed from "../models/bed.js";
+import Room from "../models/room.js";
+import mongoose from "mongoose";  
 
 const router = express.Router();
 
@@ -18,6 +21,34 @@ function deleteStoredFile(storedPath) {
 
 // CREATE — accept two files: idProofImage and userImage
 // Use upload.fields to accept multiple named file fields
+// router.post(
+//   '/',
+//   upload.fields([
+//     { name: 'idProofImage', maxCount: 1 },
+//     { name: 'userImage', maxCount: 1 }
+//   ]),
+//   async (req, res) => {
+//     try {
+//       const data = req.body || {};
+
+//       // req.files is an object: { idProofImage: [file], userImage: [file] }
+//       if (req.files && req.files.idProofImage && req.files.idProofImage[0]) {
+//         data.idProofImage = `/uploads/idproofs/${req.files.idProofImage[0].filename}`;
+//       }
+//       if (req.files && req.files.userImage && req.files.userImage[0]) {
+//         data.userImage = `/uploads/users/${req.files.userImage[0].filename}`;
+//       }
+
+//       const profile = new UserProfile(data);
+//       await profile.save();
+
+//       res.status(201).json({ message: 'Profile created', profile });
+//     } catch (error) {
+//       console.error(error);
+//       res.status(500).json({ message: 'Error creating profile', error: error.message });
+//     }
+//   }
+// );
 router.post(
   '/',
   upload.fields([
@@ -25,10 +56,12 @@ router.post(
     { name: 'userImage', maxCount: 1 }
   ]),
   async (req, res) => {
+    let session;
+    let profile;
     try {
       const data = req.body || {};
+      const bedId = data.bedId;
 
-      // req.files is an object: { idProofImage: [file], userImage: [file] }
       if (req.files && req.files.idProofImage && req.files.idProofImage[0]) {
         data.idProofImage = `/uploads/idproofs/${req.files.idProofImage[0].filename}`;
       }
@@ -36,16 +69,81 @@ router.post(
         data.userImage = `/uploads/users/${req.files.userImage[0].filename}`;
       }
 
-      const profile = new UserProfile(data);
-      await profile.save();
+      // If no bed requested, simple create
+      if (!bedId) {
+        profile = new UserProfile(data);
+        await profile.save();
+        return res.status(201).json({ message: 'Profile created', profile });
+      }
 
-      res.status(201).json({ message: 'Profile created', profile });
+      // If bedId present -> create profile + allocate bed in a transaction
+      session = await mongoose.startSession();
+      session.startTransaction();
+
+      const bed = await Bed.findById(bedId).session(session);
+      if (!bed) throw new Error("Selected bed not found");
+      if (bed.isOccupied) throw new Error("Selected bed is already occupied");
+
+      profile = new UserProfile(data);
+      await profile.save({ session });
+
+      bed.isOccupied = true;
+      bed.occupant = profile._id;
+      await bed.save({ session });
+
+      profile.allocatedBed = bed._id;
+      profile.allocatedRoom = bed.room;
+      profile.bedNumber = bed.bedNumber;
+
+      const room = await Room.findById(bed.room).session(session);
+      if (room) {
+        profile.roomNumber = room.roomNumber;
+        profile.rentAmount = room.rentAmount;
+      }
+
+      await profile.save({ session });
+
+      const remainingFreeBeds = await Bed.countDocuments({
+        room: bed.room,
+        isOccupied: false
+      }).session(session);
+
+      if (room) {
+        room.status = remainingFreeBeds === 0 ? "Full" : "Available";
+        await room.save({ session });
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+
+      const profileSafe = await UserProfile.findById(profile._id)
+        .populate("allocatedBed")
+        .populate("allocatedRoom");
+      const bedSafe = await Bed.findById(bed._id).populate("room", "roomNumber rentAmount");
+
+      return res.status(201).json({ message: 'Profile created and bed allocated', profile: profileSafe, bed: bedSafe });
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Error creating profile', error: error.message });
+      try {
+        if (session && session.inTransaction()) await session.abortTransaction();
+      } catch (e) { /* ignore */ }
+      if (session) session.endSession();
+
+      try {
+        if (profile && profile._id) await UserProfile.deleteOne({ _id: profile._id });
+      } catch (e) { /* ignore */ }
+
+      if (req.files && req.files.idProofImage && req.files.idProofImage[0]) {
+        deleteStoredFile(`/uploads/idproofs/${req.files.idProofImage[0].filename}`);
+      }
+      if (req.files && req.files.userImage && req.files.userImage[0]) {
+        deleteStoredFile(`/uploads/users/${req.files.userImage[0].filename}`);
+      }
+
+      return res.status(400).json({ message: "Error creating profile or allocating bed", error: error.message });
     }
   }
 );
+
 
 // GET ALL
 router.get('/', async (req, res) => {
