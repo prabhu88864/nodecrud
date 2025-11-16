@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import UserProfile from './src/models/userProfile.js';
 import userProfileRoutes from './src/routes/userProfileRoutes.js'; 
 import roomRoutes from './src/routes/roomRoutes.js'; 
+import allocationRoutes from './src/routes/allocationRoutes.js';
 
 
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/userprofile',userProfileRoutes);
 app.use('/api/rooms',roomRoutes);
+app.use("/api/allocation", allocationRoutes);
 
 
 await connectDB();
