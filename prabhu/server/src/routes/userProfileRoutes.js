@@ -204,6 +204,7 @@ router.get('/:id', async (req, res) => {
 // );
 
 // UPDATE — accept new idProofImage and/or userImage and optionally change bed
+// UPDATE — accept new idProofImage and/or userImage and optionally change bed
 router.put(
   '/:id',
   upload.fields([
@@ -301,7 +302,7 @@ router.put(
 
       // 5) Recalculate room statuses for rooms we touched
       for (const roomIdStr of roomsToRecalc) {
-        const roomId = mongoose.Types.ObjectId(roomIdStr);
+        const roomId = new mongoose.Types.ObjectId(roomIdStr); // <-- fixed: use `new`
         const remainingFreeBeds = await Bed.countDocuments({
           room: roomId,
           isOccupied: false
@@ -330,6 +331,7 @@ router.put(
     }
   }
 );
+
 
 
 // DELETE — remove both files (if present)
