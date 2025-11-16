@@ -50,18 +50,22 @@ router.get("/available-rooms", async (req, res) => {
    Get available beds
    Optional query: ?roomId=xxx
    ============= */
-router.get("/available-beds", async (req, res) => {
-  try {
-    const { roomId } = req.query;
-    const filter = { isOccupied: false };
-    if (roomId) filter.room = mongoose.Types.ObjectId(roomId);
-
-    const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
-    res.json(beds);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+   router.get("/available-beds", async (req, res) => {
+    try {
+      const { roomId } = req.query;
+      const filter = { isOccupied: false };
+  
+      if (roomId) {
+        filter.room = new mongoose.Types.ObjectId(roomId);
+      }
+  
+      const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+      res.json(beds);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
 
 /* =============
    Allocate a bed to a user (atomic)
