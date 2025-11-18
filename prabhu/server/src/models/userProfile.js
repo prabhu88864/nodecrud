@@ -18,7 +18,7 @@ const userProfileSchema = new mongoose.Schema({
   rentAmount: Number,
   bedNumber: String,
   exitDate: { type: Date },
-  joinedDate: { type: Date, default: Date.now },
+  joinedDate: { type: Date },
 
   isActive: { type: Boolean, default: true },
   allocatedRoom: { type: mongoose.Schema.Types.ObjectId, ref: "Room" },

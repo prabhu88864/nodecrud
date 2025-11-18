@@ -6,6 +6,7 @@ import UserProfile from '../models/userProfile.js';
 import Bed from "../models/bed.js";
 import Room from "../models/room.js";
 import mongoose from "mongoose";  
+import { createFirstPaymentForUser } from '../services/paymentService.js';
 
 const router = express.Router();
 
@@ -69,6 +70,42 @@ router.post(
         data.userImage = `/uploads/users/${req.files.userImage[0].filename}`;
       }
 
+      if (data.joinedDate) {
+        const raw = String(data.joinedDate).trim();
+        console.log("joinedDate raw from client:", raw);
+      
+        // try ISO / Date.parse first
+        let jd = new Date(raw);
+      
+        // If invalid, try common non-ISO formats: DD-MM-YYYY or DD/MM/YYYY
+        if (isNaN(jd.getTime())) {
+          // try detect dd-mm-yyyy or dd/mm/yyyy
+          const m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+          if (m) {
+            // m[1]=day, m[2]=month, m[3]=year
+            const day = parseInt(m[1], 10);
+            const month = parseInt(m[2], 10) - 1; // zero-based
+            const year = parseInt(m[3], 10);
+            jd = new Date(year, month, day);
+          }
+        }
+      
+        // If still invalid, try numeric timestamp
+        if (isNaN(jd.getTime()) && /^\d+$/.test(raw)) {
+          const ts = parseInt(raw, 10);
+          // assume seconds or ms
+          jd = ts > 1e12 ? new Date(ts) : new Date(ts * 1000);
+        }
+      
+        if (!isNaN(jd.getTime())) {
+          data.joinedDate = jd;
+          console.log("joinedDate parsed to:", jd.toISOString());
+        } else {
+          console.log("joinedDate INVALID, removing it so default applies");
+          delete data.joinedDate;
+        }
+      }
+
       // If no bed requested, simple create
       if (!bedId) {
         profile = new UserProfile(data);
@@ -120,6 +157,15 @@ router.post(
         .populate("allocatedBed")
         .populate("allocatedRoom");
       const bedSafe = await Bed.findById(bed._id).populate("room", "roomNumber rentAmount");
+    
+
+        // create first payment
+        try {
+          await createFirstPaymentForUser(profile);
+        } catch (e) {
+          console.warn("Failed to create initial payment for user:", e.message);
+          // you can ignore or handle rollback if desired
+        }
 
       return res.status(201).json({ message: 'Profile created and bed allocated', profile: profileSafe, bed: bedSafe });
     } catch (error) {

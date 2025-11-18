@@ -11,12 +11,26 @@ import UserProfile from './src/models/userProfile.js';
 import userProfileRoutes from './src/routes/userProfileRoutes.js'; 
 import roomRoutes from './src/routes/roomRoutes.js'; 
 import allocationRoutes from './src/routes/allocationRoutes.js';
+import paymentsRoutes from "./src/routes/paymentRoutes.js";
+
+import cron from "node-cron";
+import { runBillingJob } from "./src/services/billingJob.js";
 
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+cron.schedule("0 2 * * *", async () => {
+  try {
+    console.log("Billing job starting:", new Date().toISOString());
+    const res = await runBillingJob({ aheadDays: 45 });
+    console.log("Billing job finished:", res);
+  } catch (err) {
+    console.error("Billing job error:", err);
+  }
+});
 
 
 
@@ -39,6 +53,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/userprofile',userProfileRoutes);
 app.use('/api/rooms',roomRoutes);
 app.use("/api/allocation", allocationRoutes);
+app.use("/api/payments", paymentsRoutes);
 
 
 await connectDB();
