@@ -45,6 +45,44 @@ router.get("/pending", async (req, res) => {
   }
 });
 
+// GET paid payments (optional ?userId=... & ?from=YYYY-MM-DD & ?to=YYYY-MM-DD)
+router.get("/paid", async (req, res) => {
+  try {
+    const { userId, from, to } = req.query;
+    const q = { status: "paid" };
+
+    if (userId) q.user = userId;
+
+    // optional date range on paidAt
+    if (from || to) {
+      q.paidAt = {};
+      if (from) {
+        const fromD = new Date(from);
+        if (!isNaN(fromD.getTime())) q.paidAt.$gte = fromD;
+      }
+      if (to) {
+        // include the whole 'to' day by setting time to end of day
+        const toD = new Date(to);
+        if (!isNaN(toD.getTime())) {
+          toD.setHours(23,59,59,999);
+          q.paidAt.$lte = toD;
+        }
+      }
+      // if paidAt ended up empty because parsing failed, delete it
+      if (Object.keys(q.paidAt).length === 0) delete q.paidAt;
+    }
+
+    const list = await Payment.find(q)
+      .sort({ paidAt: -1 })
+      .populate("user", "fullName phone roomNumber bedNumber");
+
+    res.json({ count: list.length, payments: list });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // GET upcoming payments within next N days (default 30)
 // optional ?userId=<id>&days=7
 router.get("/upcoming", async (req, res) => {
@@ -64,31 +102,46 @@ router.get("/upcoming", async (req, res) => {
 
 // POST /:id/pay -> mark payment as paid; body: { paidAt(optional ISO), createNext:true/false }
 router.post("/:id/pay", async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
-    const payment = await Payment.findById(req.params.id).session(session);
-    if (!payment) throw new Error("Payment not found");
-    if (payment.status === "paid") throw new Error("Payment already paid");
+    console.log("PAY endpoint hit:", { params: req.params, body: req.body });
 
-    payment.status = "paid";
-    payment.paidAt = req.body.paidAt ? new Date(req.body.paidAt) : new Date();
-    await payment.save({ session });
+    // ensure we received body
+    const body = req.body || {};
+    const providedStatus = body.status;
 
-    // optionally create next payment automatically
-    if (req.body.createNext) {
-      await createNextPaymentForUser(payment.user);
+    // validate status present
+    if (!providedStatus || typeof providedStatus !== "string") {
+      return res.status(400).json({ message: "status is required in request body (e.g. 'paid')" });
     }
 
-    await session.commitTransaction();
-    session.endSession();
+    // find payment
+    const payment = await Payment.findById(req.params.id);
+    if (!payment) {
+      return res.status(404).json({ message: "Payment not found" });
+    }
 
-    const fresh = await Payment.findById(payment._id).populate("user", "fullName phone");
-    res.json({ message: "Payment marked paid", payment: fresh });
+    // protect: if already paid and client trying to set paid again, error
+    if (payment.status === "paid" && providedStatus === "paid") {
+      return res.status(400).json({ message: "Payment already paid" });
+    }
+
+    // update
+    payment.status = providedStatus;
+    if (providedStatus === "paid") {
+      payment.paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
+    } else {
+      // if changing away from paid, clear paidAt (optional)
+      // payment.paidAt = undefined;
+    }
+
+    await payment.save();
+
+    const fresh = await Payment.findById(payment._id).populate("user", "fullName phone roomNumber");
+
+    return res.json({ message: "Payment updated", payment: fresh });
   } catch (err) {
-    try { await session.abortTransaction(); } catch (_) {}
-    session.endSession();
-    res.status(400).json({ message: "Error marking paid", error: err.message });
+    console.error("Error in /:id/pay:", err);
+    return res.status(500).json({ message: "Error updating payment", error: err.message });
   }
 });
 
