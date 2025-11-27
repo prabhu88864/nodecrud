@@ -45,6 +45,43 @@ router.get("/pending", async (req, res) => {
   }
 });
 
+// GET pending payments filtered by fullName (case-insensitive)
+// Example: /pending/search?name=seshu
+router.get("/pending/search", async (req, res) => {
+  try {
+    const { name } = req.query;
+
+    if (!name || name.trim() === "") {
+      return res.status(400).json({ message: "name query is required" });
+    }
+
+    // Step 1: find matching users by name
+    const users = await UserProfile.find({
+      fullName: { $regex: name, $options: "i" }   // case-insensitive
+    }).select("_id");
+
+    if (users.length === 0) {
+      return res.json({ count: 0, payments: [] });
+    }
+
+    const userIds = users.map(u => u._id);
+
+    // Step 2: find pending payments for these users
+    const payments = await Payment.find({
+      status: "pending",
+      user: { $in: userIds }
+    })
+    .populate("user", "fullName phone roomNumber bedNumber")
+    .sort({ dueDate: 1 });
+
+    return res.json({ count: payments.length, payments });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
 // GET paid payments (optional ?userId=... & ?from=YYYY-MM-DD & ?to=YYYY-MM-DD)
 router.get("/paid", async (req, res) => {
   try {
