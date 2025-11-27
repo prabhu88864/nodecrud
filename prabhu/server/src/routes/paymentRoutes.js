@@ -146,7 +146,7 @@ router.get("/upcoming", async (req, res) => {
 // });
 router.post("/:id/pay", async (req, res) => {
   try {
-    const { status, paidAmount } = req.body;
+    const { status, paidAmount, remaining } = req.body;
 
     if (!status) {
       return res.status(400).json({ message: "status is required" });
@@ -157,34 +157,36 @@ router.post("/:id/pay", async (req, res) => {
       return res.status(404).json({ message: "Payment not found" });
     }
 
-    // update status
+    // Update status directly
     payment.status = status;
 
-    // optional update for partial/paid
+    // Admin can directly edit paidAmount
     if (paidAmount !== undefined) {
-      const todayPaid = Number(paidAmount);
-    
-      if (isNaN(todayPaid) || todayPaid < 0) {
+      const val = Number(paidAmount);
+      if (isNaN(val) || val < 0) {
         return res.status(400).json({ message: "Invalid paidAmount" });
       }
-    
-      // ADD to existing
-      payment.paidAmount = (payment.paidAmount || 0) + todayPaid;
-    
-      // calculate remaining
-      payment.remaining = payment.amount - payment.paidAmount;
+      payment.paidAmount = val;
     }
-    
 
-    // if fully paid
-    if (payment.paidAmount >= payment.amount) {
+    // Admin can directly edit remaining
+    if (remaining !== undefined) {
+      const val = Number(remaining);
+      if (isNaN(val) || val < 0) {
+        return res.status(400).json({ message: "Invalid remaining amount" });
+      }
+      payment.remaining = val;
+    }
+
+    // If remaining becomes 0 → make it paid
+    if (payment.remaining === 0) {
       payment.status = "paid";
-      payment.remaining = 0;
       payment.paidAt = new Date();
     }
 
     await payment.save();
-    const fresh = await Payment.findById(payment._id).populate("user", "fullName phone roomNumber");
+    const fresh = await Payment.findById(payment._id)
+      .populate("user", "fullName phone roomNumber");
 
     return res.json({ message: "Payment updated", payment: fresh });
 
@@ -193,6 +195,7 @@ router.post("/:id/pay", async (req, res) => {
     return res.status(500).json({ message: "Error updating payment", error: err.message });
   }
 });
+
 
 
 // convenience: get all payments (optional userId)
