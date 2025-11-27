@@ -36,7 +36,7 @@ router.get("/pending", async (req, res) => {
   try {
     const { userId } = req.query;
     const today = new Date();
-    const q = { status: "pending", dueDate: { $lte: today } };
+    const q = { status: "pending"};
     if (userId) q.user = userId;
     const list = await Payment.find(q).populate("user", "fullName phone roomNumber bedNumber");
     res.json({ count: list.length, payments: list });
