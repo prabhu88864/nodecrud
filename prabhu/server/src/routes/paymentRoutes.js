@@ -162,9 +162,19 @@ router.post("/:id/pay", async (req, res) => {
 
     // optional update for partial/paid
     if (paidAmount !== undefined) {
-      payment.paidAmount = Number(paidAmount);
+      const todayPaid = Number(paidAmount);
+    
+      if (isNaN(todayPaid) || todayPaid < 0) {
+        return res.status(400).json({ message: "Invalid paidAmount" });
+      }
+    
+      // ADD to existing
+      payment.paidAmount = (payment.paidAmount || 0) + todayPaid;
+    
+      // calculate remaining
       payment.remaining = payment.amount - payment.paidAmount;
     }
+    
 
     // if fully paid
     if (payment.paidAmount >= payment.amount) {
