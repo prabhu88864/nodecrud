@@ -137,6 +137,10 @@ router.post(
         profile.roomNumber = room.roomNumber;
         profile.rentAmount = room.rentAmount;
       }
+       if (typeof room.floor !== "undefined") {
+    profile.floor = room.floor;          // human-readable floor on profile
+    profile.allocatedFloor = room.floor; // explicitly store allocated floor
+  }
 
       await profile.save({ session });
 
@@ -308,6 +312,8 @@ router.put(
           profile.bedNumber = undefined;
           profile.roomNumber = undefined;
           profile.rentAmount = undefined;
+          profile.allocatedFloor = undefined; // clear old allocated floor
+profile.floor = undefined;  
         }
       }
 
@@ -333,6 +339,10 @@ router.put(
         if (newRoom) {
           profile.roomNumber = newRoom.roomNumber;
           profile.rentAmount = newRoom.rentAmount;
+           if (typeof newRoom.floor !== "undefined") {
+    profile.floor = newRoom.floor;
+    profile.allocatedFloor = newRoom.floor;
+  }
           roomsToRecalc.add(String(newRoom._id));
         }
       }
