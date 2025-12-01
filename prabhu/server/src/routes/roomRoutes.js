@@ -9,9 +9,9 @@ const router = express.Router();
    ============================ */
 router.post("/", async (req, res) => {
   try {
-    const { roomNumber, rentAmount, beds } = req.body; // beds = ["A1","A2","A3"]
+    const { roomNumber, rentAmount, beds, floor } = req.body; // beds = ["A1","A2","A3"]
 
-    const room = await Room.create({ roomNumber, rentAmount });
+    const room = await Room.create({ roomNumber, rentAmount, floor });
 
     // create bed entries
     const createdBeds = await Promise.all(
@@ -60,7 +60,7 @@ router.get("/:id", async (req, res) => {
    ============================ */
 router.put("/:id", async (req, res) => {
   try {
-    const { roomNumber, rentAmount, beds } = req.body;
+    const { roomNumber, rentAmount, beds,floor } = req.body;
 
     const room = await Room.findById(req.params.id);
     if (!room) return res.status(404).json({ message: "Room not found" });
@@ -68,6 +68,7 @@ router.put("/:id", async (req, res) => {
     // update room fields
     if (roomNumber) room.roomNumber = roomNumber;
     if (rentAmount) room.rentAmount = rentAmount;
+     if (floor) room.floor = floor;
 
     // update beds (optional)
     if (beds && beds.length > 0) {

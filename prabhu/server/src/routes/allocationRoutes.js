@@ -1,4 +1,4 @@
-// imports at top of file
+// routes/rooms.js
 import express from "express";
 import mongoose from "mongoose";
 import Room from "../models/room.js";
@@ -7,14 +7,69 @@ import UserProfile from "../models/userProfile.js";
 
 const router = express.Router();
 
+// Quick logger to see which URL is being hit (remove after debugging)
+router.use((req, res, next) => {
+  console.log(`[rooms route] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 /* =============
-   Get available rooms
-   Returns rooms that have at least one non-occupied bed, along with availableBedsCount
+   1) AVAILABLE FLOORS
+   Returns distinct floor values for rooms that have at least one free bed.
+   Example: GET /api/rooms/available-floors
+   ============= */
+router.get("/available-floors", async (req, res) => {
+  try {
+    const floors = await Room.aggregate([
+      {
+        $lookup: {
+          from: "beds",
+          localField: "_id",
+          foreignField: "room",
+          as: "beds"
+        }
+      },
+      {
+        $addFields: {
+          freeBedsCount: {
+            $size: {
+              $filter: {
+                input: "$beds",
+                as: "b",
+                cond: { $eq: ["$$b.isOccupied", false] }
+              }
+            }
+          }
+        }
+      },
+      { $match: { freeBedsCount: { $gt: 0 } } },
+      {
+        $group: {
+          _id: "$floor"
+        }
+      },
+      { $project: { _id: 0, floor: "$_id" } },
+      { $sort: { floor: 1 } }
+    ]);
+
+    res.json(floors.map((f) => f.floor));
+  } catch (err) {
+    console.error("available-floors error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* =============
+   2) Get available rooms (optional ?floor=First)
    ============= */
 router.get("/available-rooms", async (req, res) => {
   try {
-    // Option A (efficient): aggregate beds count per room
-    const rooms = await Room.aggregate([
+    const { floor } = req.query;
+    const matchStage = {};
+    if (typeof floor !== "undefined") matchStage.floor = floor;
+
+    const pipeline = [
+      { $match: matchStage },
       {
         $lookup: {
           from: "beds",
@@ -37,38 +92,60 @@ router.get("/available-rooms", async (req, res) => {
         }
       },
       { $match: { availableBedsCount: { $gt: 0 } } },
-      { $project: { beds: 0 } } // don't return large bed arrays here
-    ]);
+      { $project: { beds: 0 } }
+    ];
 
+    const rooms = await Room.aggregate(pipeline);
     res.json(rooms);
   } catch (err) {
+    console.error("available-rooms error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 /* =============
-   Get available beds
+   3) Get available beds (existing endpoint)
    Optional query: ?roomId=xxx
    ============= */
-   router.get("/available-beds", async (req, res) => {
-    try {
-      const { roomId } = req.query;
-      const filter = { isOccupied: false };
-  
-      if (roomId) {
-        filter.room = new mongoose.Types.ObjectId(roomId);
+router.get("/available-beds", async (req, res) => {
+  try {
+    const { roomId } = req.query;
+    const filter = { isOccupied: false };
+
+    if (roomId) {
+      if (!mongoose.Types.ObjectId.isValid(roomId)) {
+        return res.status(400).json({ message: "Invalid roomId" });
       }
-  
-      const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
-      res.json(beds);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+      filter.room = new mongoose.Types.ObjectId(roomId);
     }
-  });
-  
+
+    const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+    res.json(beds);
+  } catch (err) {
+    console.error("available-beds error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /* =============
-   Allocate a bed to a user (atomic)
+   4) Get beds for a room (all beds, with isOccupied flag)
+   Example: GET /api/rooms/:id/beds
+   ============= */
+router.get("/:id/beds", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid room id" });
+
+    const beds = await Bed.find({ room: id }).select("bedNumber isOccupied occupant").lean();
+    res.json(beds);
+  } catch (err) {
+    console.error("/:id/beds error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* =============
+   5) Allocate a bed to a user (atomic)
    body: { userId, bedId }
    ============= */
 router.post("/allocate-bed", async (req, res) => {
@@ -83,26 +160,27 @@ router.post("/allocate-bed", async (req, res) => {
       return res.status(400).json({ message: "userId and bedId required" });
     }
 
-    // load bed and ensure it's free (with session)
+    if (!mongoose.Types.ObjectId.isValid(bedId) || !mongoose.Types.ObjectId.isValid(userId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid userId or bedId" });
+    }
+
     const bed = await Bed.findById(bedId).session(session);
     if (!bed) throw new Error("Bed not found");
     if (bed.isOccupied) throw new Error("Bed already occupied");
 
-    // optionally check if user already has an allocation
     const user = await UserProfile.findById(userId).session(session);
     if (!user) throw new Error("User not found");
     if (user.allocatedBed) throw new Error("User already has an allocated bed");
 
-    // mark bed occupied and set occupant
     bed.isOccupied = true;
     bed.occupant = user._id;
     await bed.save({ session });
 
-    // update user profile with allocation details (also store human readable numbers)
     user.allocatedBed = bed._id;
     user.allocatedRoom = bed.room;
     user.bedNumber = bed.bedNumber;
-    // optional: populate room to grab rent/roomNumber
     const room = await Room.findById(bed.room).session(session);
     if (room) {
       user.roomNumber = room.roomNumber;
@@ -110,19 +188,20 @@ router.post("/allocate-bed", async (req, res) => {
     }
     await user.save({ session });
 
-    // after allocating, check if the room has any free beds left:
+    // update room status
     const remainingFreeBeds = await Bed.countDocuments({
       room: bed.room,
       isOccupied: false
     }).session(session);
 
-    room.status = remainingFreeBeds === 0 ? "Full" : "Available";
-    await room.save({ session });
+    if (room) {
+      room.status = remainingFreeBeds === 0 ? "Full" : "Available";
+      await room.save({ session });
+    }
 
     await session.commitTransaction();
     session.endSession();
 
-    // return useful info
     res.json({
       message: "Bed allocated",
       bed: await Bed.findById(bed._id).populate("room", "roomNumber rentAmount"),
@@ -131,13 +210,14 @@ router.post("/allocate-bed", async (req, res) => {
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
+    console.error("allocate-bed error:", err);
     res.status(400).json({ error: err.message });
   }
 });
 
 /* =============
-   Release bed (de-allocate)
-   body: { userId, bedId } or parameterize as needed
+   6) Release bed (de-allocate)
+   body: { userId, bedId }
    ============= */
 router.post("/release-bed", async (req, res) => {
   const session = await mongoose.startSession();
@@ -147,6 +227,10 @@ router.post("/release-bed", async (req, res) => {
     const { userId, bedId } = req.body;
     if (!userId || !bedId) throw new Error("userId and bedId required");
 
+    if (!mongoose.Types.ObjectId.isValid(bedId) || !mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error("Invalid userId or bedId");
+    }
+
     const bed = await Bed.findById(bedId).session(session);
     const user = await UserProfile.findById(userId).session(session);
     if (!bed || !user) throw new Error("Bed or user not found");
@@ -155,12 +239,10 @@ router.post("/release-bed", async (req, res) => {
       throw new Error("This user does not occupy that bed");
     }
 
-    // free the bed
     bed.isOccupied = false;
     bed.occupant = null;
     await bed.save({ session });
 
-    // clear user allocation
     user.allocatedBed = undefined;
     user.allocatedRoom = undefined;
     user.bedNumber = undefined;
@@ -168,15 +250,16 @@ router.post("/release-bed", async (req, res) => {
     user.rentAmount = undefined;
     await user.save({ session });
 
-    // update room status
     const room = await Room.findById(bed.room).session(session);
     const remainingFreeBeds = await Bed.countDocuments({
       room: bed.room,
       isOccupied: false
     }).session(session);
 
-    room.status = remainingFreeBeds === 0 ? "Full" : "Available";
-    await room.save({ session });
+    if (room) {
+      room.status = remainingFreeBeds === 0 ? "Full" : "Available";
+      await room.save({ session });
+    }
 
     await session.commitTransaction();
     session.endSession();
@@ -185,7 +268,28 @@ router.post("/release-bed", async (req, res) => {
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
+    console.error("release-bed error:", err);
     res.status(400).json({ error: err.message });
+  }
+});
+
+/* =============
+   7) Generic GET room by id
+   IMPORTANT: This MUST be last so it does not capture /available-floors etc.
+   Example: GET /api/rooms/:id
+   ============= */
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid room id" });
+
+    const room = await Room.findById(id).populate("beds");
+    if (!room) return res.status(404).json({ message: "Room not found" });
+
+    res.json(room);
+  } catch (error) {
+    console.error("GET /:id error:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
