@@ -58,7 +58,7 @@ router.get("/:id", async (req, res) => {
    UPDATE ROOM (roomNumber, rentAmount)
    AND UPDATE BEDS if given
    ============================ */
-router.put("/edit/:id", async (req, res) => {
+router.put("/:id", async (req, res) => {
   try {
     const { roomNumber, rentAmount, beds } = req.body;
 
