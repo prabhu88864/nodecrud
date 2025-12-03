@@ -50,6 +50,66 @@ function deleteStoredFile(storedPath) {
 //     }
 //   }
 // );
+
+
+// Add near top of routes/payments.js (after imports)
+router.get("/search-users", async (req, res) => {
+  try {
+    const q = (req.query.q || "").trim();
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
+
+    if (!q || q.length < 1) {
+      return res.status(400).json({ message: "Query param `q` is required" });
+    }
+
+    // build regex for case-insensitive partial match
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+
+    // search across common fields
+    const filter = {
+      $or: [
+        { fullName: re },
+        { phone: re },
+        { roomNumber: re },
+        { bedNumber: re },
+        { floor: re },
+        // If you have email field in profile uncomment:
+        // { email: re }
+      ]
+    };
+
+    const results = await UserProfile.find(filter)
+      .limit(limit)
+      .select("fullName phone floor roomNumber bedNumber advanceAmount damageCharges allocatedRoom allocatedBed isActive")
+      .populate("allocatedRoom", "roomNumber floor")
+      .populate("allocatedBed", "bedNumber")
+      .lean();
+
+    // Optionally sort: active first, then name
+    results.sort((a, b) => {
+      if (a.isActive === b.isActive) return (a.fullName || "").localeCompare(b.fullName || "");
+      return a.isActive ? -1 : 1;
+    });
+
+    // return concise objects for frontend
+    const mapped = results.map((u) => ({
+      _id: u._id,
+      fullName: u.fullName,
+      phone: u.phone,
+      floor: u.floor || (u.allocatedRoom && u.allocatedRoom.floor) || u.allocatedFloor || null,
+      roomNumber: u.roomNumber || (u.allocatedRoom && u.allocatedRoom.roomNumber) || null,
+      bedNumber: u.bedNumber || (u.allocatedBed && u.allocatedBed.bedNumber) || null,
+      advanceAmount: (u.advanceAmount || 0),
+      damageCharges: typeof u.damageCharges === "number" ? u.damageCharges : (u.damageCharges == null ? 0 : u.damageCharges),
+      isActive: !!u.isActive
+    }));
+
+    return res.json({ count: mapped.length, results: mapped });
+  } catch (err) {
+    console.error("GET /api/payments/search-users error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 router.post(
   '/',
   upload.fields([
@@ -163,13 +223,7 @@ router.post(
       const bedSafe = await Bed.findById(bed._id).populate("room", "roomNumber rentAmount");
     
 
-        // create first payment
-        try {
-          await createFirstPaymentForUser(profile);
-        } catch (e) {
-          console.warn("Failed to create initial payment for user:", e.message);
-          // you can ignore or handle rollback if desired
-        }
+      
 
       return res.status(201).json({ message: 'Profile created and bed allocated', profile: profileSafe, bed: bedSafe });
     } catch (error) {
@@ -407,5 +461,7 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ message: 'Error deleting profile', error: error.message });
   }
 });
+
+
 
 export default router;

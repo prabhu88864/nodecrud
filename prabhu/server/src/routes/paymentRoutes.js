@@ -3,246 +3,258 @@ import express from "express";
 import mongoose from "mongoose";
 import Payment from "../models/payment.js";
 import UserProfile from "../models/userProfile.js";
-import { addMonthsKeepDay } from "../utils/date.js";
 
 const router = express.Router();
 
-// helper to create next payment for a user (simple)
-async function createNextPaymentForUser(userId) {
-  const user = await UserProfile.findById(userId);
-  if (!user) throw new Error("User not found");
-  const last = await Payment.findOne({ user: userId }).sort({ periodStart: -1 });
+/**
+ * POST /       - create payment
+ * GET  /       - list payments (filter by user/status/from/to)
+ * GET  /:id    - get single payment
+ * PUT  /:id    - update payment (optionally apply to user with ?apply=true)
+ * DELETE /:id  - delete payment
+ */
 
-  let nextStart;
-  if (!last) nextStart = user.joinedDate ? new Date(user.joinedDate) : new Date();
-  else nextStart = addMonthsKeepDay(last.periodStart, 1);
+/* -------------------
+   CREATE PAYMENT
+   Body:
+   {
+     "user": "<userId>",
+     "amount": 5000,
+     "fromDate": "2025-12-01",
+     "toDate": "2025-12-31",
+     "status": "paid",            // optional: "pending" or "paid"
+     "remaining": 0,              // optional
+     // Optional helper fields (not stored in Payment doc but used to update user):
+     "applyAdvance": 5000,        // add to user.advanceAmount
+     "applyDamage": 200           // reduce user.damageCharges by this amount
+   }
+-------------------- */
+router.post("/", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  const nextEnd = addMonthsKeepDay(nextStart, 1);
-  const p = new Payment({
-    user: user._id,
-    amount: user.rentAmount || 0,
-    periodStart: nextStart,
-    periodEnd: nextEnd,
-    dueDate: nextEnd,
-    status: "pending"
-  });
-  await p.save();
-  return p;
-}
-
-// GET pending payments (due now or overdue)
-// optional ?userId=<id>
-router.get("/pending", async (req, res) => {
   try {
-    const { userId } = req.query;
-    const today = new Date();
-    const q = { status: "pending"};
-    if (userId) q.user = userId;
-    const list = await Payment.find(q).populate("user", "fullName phone roomNumber bedNumber");
-    res.json({ count: list.length, payments: list });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const body = req.body || {};
+    const { user: userId, amount, fromDate, toDate, status, remaining } = body;
 
-// GET pending payments filtered by fullName (case-insensitive)
-// Example: /pending/search?name=seshu
-router.get("/pending/search", async (req, res) => {
-  try {
-    const { name } = req.query;
-
-    if (!name || name.trim() === "") {
-      return res.status(400).json({ message: "name query is required" });
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Valid user id is required" });
+    }
+    if (typeof amount !== "number" && typeof amount !== "string") {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "amount is required" });
+    }
+    if (!fromDate || !toDate) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "fromDate and toDate are required" });
     }
 
-    // Step 1: find matching users by name
-    const users = await UserProfile.find({
-      fullName: { $regex: name, $options: "i" }   // case-insensitive
-    }).select("_id");
+    // ensure user exists
+    const user = await UserProfile.findById(userId).session(session);
+    if (!user) throw new Error("User not found");
 
-    if (users.length === 0) {
-      return res.json({ count: 0, payments: [] });
-    }
+    // build payment doc
+    const paymentData = {
+      user: userId,
+      amount: Number(amount),
+      remaining: typeof remaining !== "undefined" ? Number(remaining) : undefined,
+      fromDate: new Date(fromDate),
+      toDate: new Date(toDate),
+      status: status || "paid"
+    };
 
-    const userIds = users.map(u => u._id);
+    if (paymentData.status === "paid") paymentData.paidAt = new Date();
 
-    // Step 2: find pending payments for these users
-    const payments = await Payment.find({
-      status: "pending",
-      user: { $in: userIds }
-    })
-    .populate("user", "fullName phone roomNumber bedNumber")
-    .sort({ dueDate: 1 });
+    const payment = new Payment(paymentData);
+    await payment.save({ session });
 
-    return res.json({ count: payments.length, payments });
+    // OPTIONAL: apply amounts to user profile if provided in request body
+    // applyAdvance: number to add to user.advanceAmount
+    // applyDamage: number to subtract from user.damageCharges (payment toward damage)
+    const applyAdvance = body.applyAdvance != null ? Number(body.applyAdvance) : 0;
+    const applyDamage = body.applyDamage != null ? Number(body.applyDamage) : 0;
 
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-
-// GET paid payments (optional ?userId=... & ?from=YYYY-MM-DD & ?to=YYYY-MM-DD)
-router.get("/paid", async (req, res) => {
-  try {
-    const { userId, from, to } = req.query;
-    const q = { status: "paid" };
-
-    if (userId) q.user = userId;
-
-    // optional date range on paidAt
-    if (from || to) {
-      q.paidAt = {};
-      if (from) {
-        const fromD = new Date(from);
-        if (!isNaN(fromD.getTime())) q.paidAt.$gte = fromD;
+    if (applyAdvance || applyDamage) {
+      if (applyAdvance) {
+        user.advanceAmount = (user.advanceAmount || 0) + applyAdvance;
       }
-      if (to) {
-        // include the whole 'to' day by setting time to end of day
-        const toD = new Date(to);
-        if (!isNaN(toD.getTime())) {
-          toD.setHours(23,59,59,999);
-          q.paidAt.$lte = toD;
-        }
+      if (applyDamage) {
+        // reduce damageCharges by the paid amount, but never below 0
+        user.damageCharges = Math.max(0, (user.damageCharges || 0) - applyDamage);
       }
-      // if paidAt ended up empty because parsing failed, delete it
-      if (Object.keys(q.paidAt).length === 0) delete q.paidAt;
+      await user.save({ session });
     }
 
-    const list = await Payment.find(q)
-      .sort({ paidAt: -1 })
-      .populate("user", "fullName phone roomNumber bedNumber");
+    await session.commitTransaction();
+    session.endSession();
 
-    res.json({ count: list.length, payments: list });
+    // return populated payment
+    const saved = await Payment.findById(payment._id).populate("user");
+    return res.status(201).json({ message: "Payment recorded", payment: saved });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("POST /api/payments error:", err);
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+/* -------------------
+   LIST PAYMENTS
+   Query params:
+     - user (userId)
+     - status (pending|paid)
+     - from (ISO date)   -> payments with fromDate >= this
+     - to   (ISO date)   -> payments with toDate <= this
+     - limit, skip
+-------------------- */
+router.get("/", async (req, res) => {
+  try {
+    const { user: userId, status, from, to, limit = 50, skip = 0 } = req.query;
+    const filter = {};
+
+    if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ message: "Invalid user id in query" });
+      }
+      filter.user = userId;
+    }
+    if (status) filter.status = status;
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) filter.fromDate = { $gte: d };
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) filter.toDate = filter.toDate || {};
+      if (!isNaN(d.getTime())) filter.toDate.$lte = d;
+    }
+
+    const payments = await Payment.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(Number(skip))
+      .limit(Math.min(1000, Number(limit)))
+      .populate("user", "fullName phone roomNumber");
+
+    const count = await Payment.countDocuments(filter);
+    res.json({ count, payments });
+  } catch (err) {
+    console.error("GET /api/payments error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-
-// GET upcoming payments within next N days (default 30)
-// optional ?userId=<id>&days=7
-router.get("/upcoming", async (req, res) => {
+/* -------------------
+   GET ONE PAYMENT
+-------------------- */
+router.get("/:id", async (req, res) => {
   try {
-    const days = parseInt(req.query.days || "30", 10);
-    const { userId } = req.query;
-    const today = new Date();
-    const upto = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
-    const q = { status: "pending", dueDate: { $gt: today, $lte: upto } };
-    if (userId) q.user = userId;
-    const list = await Payment.find(q).populate("user", "fullName phone roomNumber bedNumber");
-    res.json({ count: list.length, payments: list });
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid payment id" });
+
+    const payment = await Payment.findById(id).populate("user");
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+    res.json({ payment });
   } catch (err) {
+    console.error("GET /api/payments/:id error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// // POST /:id/pay -> mark payment as paid; body: { paidAt(optional ISO), createNext:true/false }
-// router.post("/:id/pay", async (req, res) => {
-//   try {
-//     console.log("PAY endpoint hit:", { params: req.params, body: req.body });
+/* -------------------
+   UPDATE PAYMENT
+   PUT /:id
+   Body: any fields from Payment model to update.
+   Optional query param: ?apply=true  — when set and body includes applyAdvance/applyDamage numeric values,
+   the route will also update the user profile inside the same transaction.
+-------------------- */
+router.put("/:id", async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-//     // ensure we received body
-//     const body = req.body || {};
-//     const providedStatus = body.status;
-
-//     // validate status present
-//     if (!providedStatus || typeof providedStatus !== "string") {
-//       return res.status(400).json({ message: "status is required in request body (e.g. 'paid')" });
-//     }
-
-//     // find payment
-//     const payment = await Payment.findById(req.params.id);
-//     if (!payment) {
-//       return res.status(404).json({ message: "Payment not found" });
-//     }
-
-//     // protect: if already paid and client trying to set paid again, error
-//     if (payment.status === "paid" && providedStatus === "paid") {
-//       return res.status(400).json({ message: "Payment already paid" });
-//     }
-
-//     // update
-//     payment.status = providedStatus;
-//     if (providedStatus === "paid") {
-//       payment.paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
-//     } else {
-//       // if changing away from paid, clear paidAt (optional)
-//       // payment.paidAt = undefined;
-//     }
-
-//     await payment.save();
-
-//     const fresh = await Payment.findById(payment._id).populate("user", "fullName phone roomNumber");
-
-//     return res.json({ message: "Payment updated", payment: fresh });
-//   } catch (err) {
-//     console.error("Error in /:id/pay:", err);
-//     return res.status(500).json({ message: "Error updating payment", error: err.message });
-//   }
-// });
-router.post("/:id/pay", async (req, res) => {
   try {
-    const { status, paidAmount, remaining } = req.body;
-
-    if (!status) {
-      return res.status(400).json({ message: "status is required" });
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid payment id" });
     }
 
-    const payment = await Payment.findById(req.params.id);
+    const payment = await Payment.findById(id).session(session);
     if (!payment) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ message: "Payment not found" });
     }
 
-    // Update status directly
-    payment.status = status;
-
-    // Admin can directly edit paidAmount
-    if (paidAmount !== undefined) {
-      const val = Number(paidAmount);
-      if (isNaN(val) || val < 0) {
-        return res.status(400).json({ message: "Invalid paidAmount" });
+    // Merge allowed fields
+    const updatable = ["amount", "remaining", "fromDate", "toDate", "status", "paidAt"];
+    updatable.forEach((k) => {
+      if (typeof req.body[k] !== "undefined") {
+        payment[k] = req.body[k];
       }
-      payment.paidAmount = val;
-    }
+    });
 
-    // Admin can directly edit remaining
-    if (remaining !== undefined) {
-      const val = Number(remaining);
-      if (isNaN(val) || val < 0) {
-        return res.status(400).json({ message: "Invalid remaining amount" });
+    // auto-set paidAt when status becomes paid
+    if (payment.status === "paid" && !payment.paidAt) payment.paidAt = new Date();
+
+    // Optionally apply to user if requested via query param ?apply=true
+    const doApply = String(req.query.apply || "false").toLowerCase() === "true";
+    if (doApply) {
+      const applyAdvance = req.body.applyAdvance != null ? Number(req.body.applyAdvance) : 0;
+      const applyDamage = req.body.applyDamage != null ? Number(req.body.applyDamage) : 0;
+
+      if ((applyAdvance || applyDamage) && (!payment.user || !mongoose.Types.ObjectId.isValid(String(payment.user)))) {
+        throw new Error("Payment has no valid user to apply to");
       }
-      payment.remaining = val;
+
+      const user = await UserProfile.findById(payment.user).session(session);
+      if (!user) throw new Error("User not found when applying payment");
+
+      if (applyAdvance) {
+        user.advanceAmount = (user.advanceAmount || 0) + applyAdvance;
+      }
+      if (applyDamage) {
+        user.damageCharges = Math.max(0, (user.damageCharges || 0) - applyDamage);
+      }
+      await user.save({ session });
     }
 
-    // If remaining becomes 0 → make it paid
-    if (payment.remaining === 0) {
-      payment.status = "paid";
-      payment.paidAt = new Date();
-    }
+    await payment.save({ session });
+    await session.commitTransaction();
+    session.endSession();
 
-    await payment.save();
-    const fresh = await Payment.findById(payment._id)
-      .populate("user", "fullName phone roomNumber");
-
-    return res.json({ message: "Payment updated", payment: fresh });
-
+    const updated = await Payment.findById(payment._id).populate("user");
+    res.json({ message: "Payment updated", payment: updated });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error updating payment", error: err.message });
+    await session.abortTransaction();
+    session.endSession();
+    console.error("PUT /api/payments/:id error:", err);
+    res.status(400).json({ error: err.message });
   }
 });
 
-
-
-// convenience: get all payments (optional userId)
-router.get("/", async (req, res) => {
+/* -------------------
+   DELETE PAYMENT
+   Note: this does NOT reverse any applied user amounts (extend if you want that).
+-------------------- */
+router.delete("/:id", async (req, res) => {
   try {
-    const q = {};
-    if (req.query.userId) q.user = req.query.userId;
-    const list = await Payment.find(q).sort({ dueDate: 1 }).populate("user", "fullName phone roomNumber");
-    res.json({ count: list.length, payments: list });
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid payment id" });
+
+    const payment = await Payment.findById(id);
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+    await payment.deleteOne();
+    res.json({ message: "Payment deleted" });
   } catch (err) {
+    console.error("DELETE /api/payments/:id error:", err);
     res.status(500).json({ error: err.message });
   }
 });
