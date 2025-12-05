@@ -41,6 +41,16 @@ const PaymentSchema = new mongoose.Schema({
 
   allocations: [AllocationSchema], // <<<<<< IMPORTANT
 
+    oldValues: [
+    {
+      amount: Number,
+      remaining: Number,
+      paidAt: Date,
+      status: String,
+      updatedAt: Date
+    }
+  ]
+
 }, { timestamps: true });
 
 PaymentSchema.index({ user: 1 });

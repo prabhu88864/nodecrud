@@ -144,13 +144,28 @@ router.get("/overdue-users", async (req, res) => {
     const minUnpaid = Math.max(0, Number(req.query.minUnpaid || 1)); // default 1 currency unit
     const limit = Math.min(1000, Number(req.query.limit || 100));
     const skip = Math.max(0, Number(req.query.skip || 0));
+    const q = (req.query.q || "").trim();
 
-    // Aggregation on userprofiles: compute monthsPassed, lookup payments sum, compute expected/unpaid
+    // base match: only active users with joinedDate
+    const baseMatch = {
+      joinedDate: { $exists: true, $ne: null },
+      isActive: { $ne: false }
+    };
+
+    // if q is present, add search conditions
+    if (q.length > 0) {
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"); // escape + case-insensitive
+      baseMatch.$or = [
+        { fullName: re },
+        { phone: re },
+        { roomNumber: re },
+        { bedNumber: re }
+      ];
+    }
+
     const pipeline = [
-      // only active users with joinedDate
-      { $match: { joinedDate: { $exists: true, $ne: null }, isActive: { $ne: false } } },
+      { $match: baseMatch },
 
-      // compute full months passed between joinedDate and now
       {
         $addFields: {
           monthsPassed: {
@@ -159,43 +174,41 @@ router.get("/overdue-users", async (req, res) => {
         }
       },
 
-      // only those who have at least minMonths full months
       { $match: { monthsPassed: { $gte: minMonths } } },
 
-      // lookup payments totals for each user
       {
         $lookup: {
           from: "payments",
           let: { uid: "$_id" },
           pipeline: [
             { $match: { $expr: { $eq: ["$user", "$$uid"] } } },
-            // only count payments up to now (if you want to include future-dated payments still, remove date filter)
             { $group: { _id: null, totalPaid: { $sum: { $ifNull: ["$amount", 0] } } } }
           ],
           as: "paidAgg"
         }
       },
 
-      // simplify paidAgg to a number and compute expected/unpaid
       {
         $addFields: {
           paidTotal: { $ifNull: [{ $arrayElemAt: ["$paidAgg.totalPaid", 0] }, 0] },
-          rentPerMonth: { $ifNull: ["$rentAmount", 0] } // if you use allocatedRoom.rentAmount, consider looking it up
+          rentPerMonth: { $ifNull: ["$rentAmount", 0] }
         }
       },
 
-      // compute expectedTotal and unpaidTotal
       {
         $addFields: {
           expectedTotal: { $multiply: ["$monthsPassed", "$rentPerMonth"] },
-          unpaidTotal: { $max: [{ $subtract: [{ $multiply: ["$monthsPassed", "$rentPerMonth"] }, "$paidTotal"] }, 0] }
+          unpaidTotal: {
+            $max: [
+              { $subtract: [{ $multiply: ["$monthsPassed", "$rentPerMonth"] }, "$paidTotal"] },
+              0
+            ]
+          }
         }
       },
 
-      // filter only those with unpaidTotal >= minUnpaid
       { $match: { unpaidTotal: { $gte: minUnpaid } } },
 
-      // project final shape for frontend
       {
         $project: {
           _id: 1,
@@ -218,12 +231,11 @@ router.get("/overdue-users", async (req, res) => {
     ];
 
     const rows = await UserProfile.aggregate(pipeline).allowDiskUse(true);
-    // optional: total count (without limit) — run a lighter aggregation to count
-    const countPipeline = pipeline.slice(0, pipeline.length - 3).concat([
-      { $count: "total" }
-    ]);
+
+    // total count without pagination
+    const countPipeline = pipeline.slice(0, pipeline.length - 3).concat([{ $count: "total" }]);
     const countRes = await UserProfile.aggregate(countPipeline).allowDiskUse(true);
-    const total = (countRes[0] && countRes[0].total) ? countRes[0].total : rows.length;
+    const total = countRes[0]?.total || rows.length;
 
     return res.json({ total, count: rows.length, results: rows });
   } catch (err) {
@@ -234,164 +246,12 @@ router.get("/overdue-users", async (req, res) => {
 
 
 
-
-
-/**
- * POST /       - create payment
- * GET  /       - list payments (filter by user/status/from/to)
- * GET  /:id    - get single payment
- * PUT  /:id    - update payment (optionally apply to user with ?apply=true)
- * DELETE /:id  - delete payment
- */
-
-/* -------------------
-   CREATE PAYMENT
-   Body:
-   {
-     "user": "<userId>",
-     "amount": 5000,
-     "fromDate": "2025-12-01",
-     "toDate": "2025-12-31",
-     "status": "paid",            // optional: "pending" or "paid"
-     "remaining": 0,              // optional
-     // Optional helper fields (not stored in Payment doc but used to update user):
-     "applyAdvance": 5000,        // add to user.advanceAmount
-     "applyDamage": 200           // reduce user.damageCharges by this amount
-   }
--------------------- */
-// router.post("/", async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-
-//   try {
-//     const body = req.body || {};
-//     const { user: userId, amount, fromDate, toDate, status, remaining } = body;
-
-//     if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: "Valid user id is required" });
-//     }
-//     if (typeof amount !== "number" && typeof amount !== "string") {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: "amount is required" });
-//     }
-//     if (!fromDate || !toDate) {
-//       await session.abortTransaction();
-//       session.endSession();
-//       return res.status(400).json({ message: "fromDate and toDate are required" });
-//     }
-
-//     // ensure user exists
-//     const user = await UserProfile.findById(userId).session(session);
-//     if (!user) throw new Error("User not found");
-
-//     // build payment doc
-//     const paymentData = {
-//       user: userId,
-//       amount: Number(amount),
-//       remaining: typeof remaining !== "undefined" ? Number(remaining) : undefined,
-//       fromDate: new Date(fromDate),
-//       toDate: new Date(toDate),
-//       status: status || "paid"
-//     };
-
-//     if (paymentData.status === "paid") paymentData.paidAt = new Date();
-
-//     const payment = new Payment(paymentData);
-//     await payment.save({ session });
-
-//     // OPTIONAL: apply amounts to user profile if provided in request body
-//     // applyAdvance: number to add to user.advanceAmount
-//     // applyDamage: number to subtract from user.damageCharges (payment toward damage)
-//     const applyAdvance = body.applyAdvance != null ? Number(body.applyAdvance) : 0;
-//     const applyDamage = body.applyDamage != null ? Number(body.applyDamage) : 0;
-
-//     if (applyAdvance || applyDamage) {
-//       if (applyAdvance) {
-//         user.advanceAmount = (user.advanceAmount || 0) + applyAdvance;
-//       }
-//       if (applyDamage) {
-//         // reduce damageCharges by the paid amount, but never below 0
-//         user.damageCharges = Math.max(0, (user.damageCharges || 0) - applyDamage);
-//       }
-//       await user.save({ session });
-//     }
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     // return populated payment
-//     const saved = await Payment.findById(payment._id).populate("user");
-//     return res.status(201).json({ message: "Payment recorded", payment: saved });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     console.error("POST /api/payments error:", err);
-//     return res.status(400).json({ error: err.message });
-//   }
-// });
-
-// router.post("/", async (req, res) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
-//   try {
-//     const body = req.body;
-//     const { user: userId, amount, fromDate, toDate } = body;
-
-//     if (!userId) throw new Error("user id required");
-//     if (!amount) throw new Error("amount required");
-//     if (!fromDate || !toDate) throw new Error("fromDate & toDate required");
-
-//     const user = await UserProfile.findById(userId).populate("allocatedRoom").session(session);
-//     if (!user) throw new Error("User not found");
-
-//     const expectedRent = user.rentAmount || (user.allocatedRoom?.rentAmount || 0);
-
-//     const labels = getLabelsBetween(fromDate, toDate, 28);
-
-//     const allocations = allocateAmount(
-//       Number(amount),
-//       fromDate,
-//       toDate,
-//       labels,
-//       expectedRent,
-//       28
-//     );
-
-//     const payment = new Payment({
-//       user: userId,
-//       amount,
-//       fromDate,
-//       toDate,
-//       status: "paid",
-//       paidAt: new Date(),
-//       allocations
-//     });
-
-//     await payment.save({ session });
-
-//     await session.commitTransaction();
-//     session.endSession();
-
-//     return res.status(201).json({
-//       message: "Payment created with allocations",
-//       payment
-//     });
-
-//   } catch (err) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     return res.status(400).json({ error: err.message });
-//   }
-// });
 router.post("/", async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
     const body = req.body;
-    const { user: userId, amount, remaining, month, fromDate, toDate } = body;
+    const { user: userId, amount, remaining, month, fromDate, toDate,status } = body;
 
     if (!userId) throw new Error("user id required");
     if (typeof amount === "undefined" || amount === null) throw new Error("amount required");
@@ -425,9 +285,9 @@ router.post("/", async (req, res) => {
       throw new Error("Either month (YYYY-MM) or fromDate & toDate required");
     }
 
-    const expected = Number(remaining);
+    const expected = user.rentAmount || user.allocatedRoom.rentAmount;
     const paid = Number(amount);
-    const unpaid = Math.max(0, expected - paid);
+    const unpaid = Number(remaining);
     
 
     const allocation = {
@@ -445,7 +305,7 @@ router.post("/", async (req, res) => {
       remaining: unpaid,
       fromDate: periodStart,
       toDate: periodEnd,
-      status: "paid",
+      status: status,
       paidAt: new Date(),
       allocations: [allocation]
     });
@@ -532,78 +392,42 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-/* -------------------
-   UPDATE PAYMENT
-   PUT /:id
-   Body: any fields from Payment model to update.
-   Optional query param: ?apply=true  — when set and body includes applyAdvance/applyDamage numeric values,
-   the route will also update the user profile inside the same transaction.
--------------------- */
 router.put("/:id", async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: "Invalid payment id" });
-    }
+    const payment = await Payment.findById(req.params.id);
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
 
-    const payment = await Payment.findById(id).session(session);
-    if (!payment) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ message: "Payment not found" });
-    }
+    // 1️⃣ Save OLD values (including old paidAt)
+    payment.oldValues.push({
+      amount: payment.amount,
+      remaining: payment.remaining,
+      paidAt: payment.paidAt,   // 👈 first/previous payment time
+      status: payment.status,
+      updatedAt: new Date()
+    });
 
-    // Merge allowed fields
-    const updatable = ["amount", "remaining", "fromDate", "toDate", "status", "paidAt"];
-    updatable.forEach((k) => {
-      if (typeof req.body[k] !== "undefined") {
-        payment[k] = req.body[k];
+    // 2️⃣ Update fields (but do NOT trust paidAt from body)
+    const fields = ["amount", "remaining", "status", "fromDate", "toDate"];
+    fields.forEach((key) => {
+      if (req.body[key] !== undefined) {
+        payment[key] = req.body[key];
       }
     });
 
-    // auto-set paidAt when status becomes paid
-    if (payment.status === "paid" && !payment.paidAt) payment.paidAt = new Date();
+    // 3️⃣ Set NEW paidAt for this change
+    payment.paidAt = new Date();   // 👈 this becomes latest payment time
 
-    // Optionally apply to user if requested via query param ?apply=true
-    const doApply = String(req.query.apply || "false").toLowerCase() === "true";
-    if (doApply) {
-      const applyAdvance = req.body.applyAdvance != null ? Number(req.body.applyAdvance) : 0;
-      const applyDamage = req.body.applyDamage != null ? Number(req.body.applyDamage) : 0;
+    await payment.save();
 
-      if ((applyAdvance || applyDamage) && (!payment.user || !mongoose.Types.ObjectId.isValid(String(payment.user)))) {
-        throw new Error("Payment has no valid user to apply to");
-      }
-
-      const user = await UserProfile.findById(payment.user).session(session);
-      if (!user) throw new Error("User not found when applying payment");
-
-      if (applyAdvance) {
-        user.advanceAmount = (user.advanceAmount || 0) + applyAdvance;
-      }
-      if (applyDamage) {
-        user.damageCharges = Math.max(0, (user.damageCharges || 0) - applyDamage);
-      }
-      await user.save({ session });
-    }
-
-    await payment.save({ session });
-    await session.commitTransaction();
-    session.endSession();
-
-    const updated = await Payment.findById(payment._id).populate("user");
-    res.json({ message: "Payment updated", payment: updated });
+    return res.json({ message: "Payment updated with history", payment });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
     console.error("PUT /api/payments/:id error:", err);
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 });
+
+
+
 
 /* -------------------
    DELETE PAYMENT
