@@ -268,9 +268,9 @@ router.get("/overdue-users", async (req, res) => {
     // if you want "total" to mean "total unpaid amount":
     return res.json({
       total: totals.totalUnpaidAmount,           // 👈 total = sum of unpaid
- 
+                                    // how many users overdue
       count: rows.length,                        // how many in this page
-     
+      results: rows
     });
   } catch (err) {
     console.error("GET /overdue-users error:", err);
