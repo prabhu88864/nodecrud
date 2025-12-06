@@ -291,7 +291,7 @@ router.post("/", async (req, res) => {
     if (!userId) throw new Error("user id required");
     if (typeof amount === "undefined" || amount === null) throw new Error("amount required");
     // allow remaining = 0; only error when undefined/null
-    if (typeof remaining === "undefined" || remaining === null) throw new Error("remaining (expected rent) required");
+    // if (typeof remaining === "undefined" || remaining === null) throw new Error("remaining (expected rent) required");
 
     // if you're using month-style simple allocation:
     // require 'month' OR require fromDate/toDate depending on your flow.
