@@ -702,8 +702,71 @@ router.put(
         }
       }
 
-      if (isVacating) {
+            if (isVacating) {
         try {
+          // 1️⃣ BEFORE doing anything, check pending dues
+
+          // Use exitDate from body (if provided) to calculate dues until that day
+          let exitBaseDate;
+          if (req.body.exitDate) {
+            const d = new Date(req.body.exitDate);
+            exitBaseDate = isNaN(d.getTime()) ? new Date() : d;
+          } else {
+            exitBaseDate = new Date();
+          }
+
+          // If no joinedDate or rentAmount, treat as no rent due
+          const joined = profile.joinedDate ? new Date(profile.joinedDate) : null;
+          const rentPerMonth = Number(profile.rentAmount || 0);
+
+          let unpaidRent = 0;
+
+          if (joined && rentPerMonth > 0) {
+            // compute full months between joinedDate and exitBaseDate
+            let monthsPassed =
+              (exitBaseDate.getFullYear() - joined.getFullYear()) * 12 +
+              (exitBaseDate.getMonth() - joined.getMonth());
+
+            // if exit day is before join day in the month, reduce one month
+            if (exitBaseDate.getDate() < joined.getDate()) {
+              monthsPassed -= 1;
+            }
+            if (monthsPassed < 0) monthsPassed = 0;
+
+            const expectedTotal = monthsPassed * rentPerMonth;
+
+            // sum all payments made by this user
+            const payAgg = await Payment.aggregate([
+              { $match: { user: profile._id } },
+              {
+                $group: {
+                  _id: null,
+                  totalPaid: { $sum: { $ifNull: ["$amount", 0] } }
+                }
+              }
+            ]);
+
+            const totalPaid =
+              (payAgg[0] && typeof payAgg[0].totalPaid === "number")
+                ? payAgg[0].totalPaid
+                : 0;
+
+            unpaidRent = Math.max(expectedTotal - totalPaid, 0);
+          }
+
+          const pendingDamage = Number(profile.damageCharges || 0);
+
+          // ❗ If user has any pending dues, block vacate
+          if (unpaidRent > 0 || pendingDamage > 0) {
+            return res.status(400).json({
+              message: "User has pending dues. Cannot vacate.",
+              unpaidRent,
+              damageCharges: pendingDamage
+            });
+          }
+
+          // 2️⃣ No dues → proceed with normal vacate
+
           session = await mongoose.startSession();
           session.startTransaction();
 
@@ -779,6 +842,7 @@ router.put(
           return res.status(400).json({ message: 'Error vacating user', error: err2.message });
         }
       }
+
       // ---------- END VACATE BRANCH ----------
 
       // From here on: NORMAL UPDATE / BED CHANGE LOGIC (user still active)
