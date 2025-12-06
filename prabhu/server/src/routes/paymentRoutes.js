@@ -140,8 +140,8 @@ router.get("/summary-report", async (req, res) => {
 // GET /api/payments/overdue-users?minMonths=2&minUnpaid=1&limit=100&skip=0
 router.get("/overdue-users", async (req, res) => {
   try {
-    const minMonths = Math.max(0, Number(req.query.minMonths || 1)); // default 2 months
-    const minUnpaid = Math.max(0, Number(req.query.minUnpaid || 1)); // default 1 currency unit
+    const minMonths = Math.max(0, Number(req.query.minMonths || 1));
+    const minUnpaid = Math.max(0, Number(req.query.minUnpaid || 1));
     const limit = Math.min(1000, Number(req.query.limit || 100));
     const skip = Math.max(0, Number(req.query.skip || 0));
     const q = (req.query.q || "").trim();
@@ -154,7 +154,7 @@ router.get("/overdue-users", async (req, res) => {
 
     // if q is present, add search conditions
     if (q.length > 0) {
-      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"); // escape + case-insensitive
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       baseMatch.$or = [
         { fullName: re },
         { phone: re },
@@ -182,7 +182,12 @@ router.get("/overdue-users", async (req, res) => {
           let: { uid: "$_id" },
           pipeline: [
             { $match: { $expr: { $eq: ["$user", "$$uid"] } } },
-            { $group: { _id: null, totalPaid: { $sum: { $ifNull: ["$amount", 0] } } } }
+            {
+              $group: {
+                _id: null,
+                totalPaid: { $sum: { $ifNull: ["$amount", 0] } }
+              }
+            }
           ],
           as: "paidAgg"
         }
@@ -230,19 +235,49 @@ router.get("/overdue-users", async (req, res) => {
       { $limit: limit }
     ];
 
+    // rows for this page
     const rows = await UserProfile.aggregate(pipeline).allowDiskUse(true);
 
-    // total count without pagination
-    const countPipeline = pipeline.slice(0, pipeline.length - 3).concat([{ $count: "total" }]);
-    const countRes = await UserProfile.aggregate(countPipeline).allowDiskUse(true);
-    const total = countRes[0]?.total || rows.length;
+    // 👉 pipeline without sort/skip/limit, to compute totals on all matching users
+    const baseForTotals = pipeline.slice(0, pipeline.length - 3);
 
-    return res.json({ total, count: rows.length, results: rows });
+    // total overdue users count
+    const countPipeline = baseForTotals.concat([{ $count: "totalUsers" }]);
+    const countRes = await UserProfile.aggregate(countPipeline).allowDiskUse(true);
+    const totalUsers = countRes[0]?.totalUsers || 0;
+
+    // sum of unpaidTotal / expectedTotal / paidTotal
+    const sumPipeline = baseForTotals.concat([
+      {
+        $group: {
+         
+          totalUnpaidAmount: { $sum: "$unpaidTotal" },
+         
+        }
+      }
+    ]);
+
+    const sumRes = await UserProfile.aggregate(sumPipeline).allowDiskUse(true);
+    const totals = sumRes[0] || {
+      totalUnpaidAmount: 0,
+      totalExpectedAmount: 0,
+      totalPaidAmount: 0
+    };
+
+    // if you want "total" to mean "total unpaid amount":
+    return res.json({
+ 
+      totalUnpaidAmount: totals.totalUnpaidAmount,
+                                     // how many users overdue
+      count: rows.length,                        // how many in this page
+    
+    });
   } catch (err) {
     console.error("GET /overdue-users error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 
 
