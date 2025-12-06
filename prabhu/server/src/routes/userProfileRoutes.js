@@ -450,6 +450,217 @@ router.get('/:id', async (req, res) => {
 
 // new put with vacat
 
+// router.put(
+//   '/:id',
+//   upload.fields([
+//     { name: 'idProofImage', maxCount: 1 },
+//     { name: 'userImage', maxCount: 1 }
+//   ]),
+//   async (req, res) => {
+//     let session;
+//     try {
+//       const profile = await UserProfile.findById(req.params.id);
+//       if (!profile) return res.status(404).json({ message: 'Profile not found' });
+
+//       // Handle new files: delete old file if new uploaded and set req.body values
+//       if (req.files && req.files.idProofImage && req.files.idProofImage[0]) {
+//         if (profile.idProofImage) deleteStoredFile(profile.idProofImage);
+//         req.body.idProofImage = `/uploads/idproofs/${req.files.idProofImage[0].filename}`;
+//       }
+//       if (req.files && req.files.userImage && req.files.userImage[0]) {
+//         if (profile.userImage) deleteStoredFile(profile.userImage);
+//         req.body.userImage = `/uploads/users/${req.files.userImage[0].filename}`;
+//       }
+
+//       // ---------- SIMPLE VACATE BRANCH ----------
+//       // If isActive is false/"false"/"inactive"/0 => VACATE USER (release bed + set exitDate)
+//       const inactiveValues = [false, 'false', 'inactive', 0];
+//       const isVacating =
+//         typeof req.body.isActive !== 'undefined' &&
+//         inactiveValues.includes(req.body.isActive);
+
+//       if (isVacating) {
+//         try {
+//           session = await mongoose.startSession();
+//           session.startTransaction();
+
+//           // mark user inactive + set exit date
+//           profile.isActive = false;
+//           profile.exitDate = new Date();
+
+//           let roomsToRecalc = new Set();
+
+//           // if user has a bed, release it (but KEEP bed/room info on profile for history)
+//           if (profile.allocatedBed) {
+//             const oldBed = await Bed.findById(profile.allocatedBed).session(session);
+//             if (oldBed) {
+//               oldBed.isOccupied = false;
+//               oldBed.occupant = null;
+//               await oldBed.save({ session });
+//               roomsToRecalc.add(String(oldBed.room));
+//             }
+//             // NOTE: do NOT clear profile.bedNumber / roomNumber / floor / rentAmount / allocatedRoom / allocatedBed
+//             // We want to know on which bed/room this user stayed even after they are inactive.
+//           }
+
+//           // apply any other fields (like notes, address, etc.)
+//           const vacateBody = { ...req.body };
+//           delete vacateBody.isActive; // we already set isActive
+//           delete vacateBody.bedId;    // no bed changes in vacate mode
+//           Object.assign(profile, vacateBody);
+
+//           await profile.save({ session });
+
+//           // Recalculate room statuses
+//           for (const roomIdStr of roomsToRecalc) {
+//             const roomId = new mongoose.Types.ObjectId(roomIdStr);
+//             const remainingFreeBeds = await Bed.countDocuments({
+//               room: roomId,
+//               isOccupied: false
+//             }).session(session);
+
+//             const room = await Room.findById(roomId).session(session);
+//             if (room) {
+//               room.status = remainingFreeBeds === 0 ? 'Full' : 'Available';
+//               await room.save({ session });
+//             }
+//           }
+
+//           await session.commitTransaction();
+//           session.endSession();
+
+//           const updated = await UserProfile.findById(profile._id)
+//             .populate('allocatedBed')
+//             .populate('allocatedRoom');
+
+//           return res.json({ message: 'User vacated and bed released', profile: updated });
+//         } catch (err2) {
+//           try {
+//             if (session && session.inTransaction()) await session.abortTransaction();
+//           } catch (e) {}
+//           if (session) session.endSession();
+//           console.error('Error vacating user:', err2.message);
+//           return res.status(400).json({ message: 'Error vacating user', error: err2.message });
+//         }
+//       }
+//       // ---------- END VACATE BRANCH ----------
+
+//       // From here on: NORMAL UPDATE / BED CHANGE LOGIC (user still active)
+
+//       // Extract requested bed change (if any). Client should send bedId (string) to change.
+//       // To explicitly release bed (but keep user active), send bedId = "" (empty string) or null.
+//       const requestedBedId =
+//         typeof req.body.bedId !== 'undefined' ? req.body.bedId || null : undefined;
+
+//       // If no bed change requested, just merge and save
+//       if (typeof requestedBedId === 'undefined') {
+//         Object.assign(profile, req.body);
+//         await profile.save();
+//         return res.json({ message: 'Profile updated', profile });
+//       }
+
+//       // Start transaction to release old bed (if any) and allocate new bed (if provided)
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // keep track of rooms we need to update status for
+//       let roomsToRecalc = new Set();
+
+//       // 1) If user currently has an allocated bed and it's different from requested, release it
+//       if (profile.allocatedBed) {
+//         // If requestedBedId is null -> means release only
+//         if (!requestedBedId || String(profile.allocatedBed) !== String(requestedBedId)) {
+//           const oldBed = await Bed.findById(profile.allocatedBed).session(session);
+//           if (oldBed) {
+//             oldBed.isOccupied = false;
+//             oldBed.occupant = null;
+//             await oldBed.save({ session });
+//             roomsToRecalc.add(String(oldBed.room));
+//           }
+//           // clear allocation fields on profile (we'll set new ones below if any)
+//           profile.allocatedBed = undefined;
+//           profile.allocatedRoom = undefined;
+//           profile.bedNumber = undefined;
+//           profile.roomNumber = undefined;
+//           profile.rentAmount = undefined;
+//           profile.allocatedFloor = undefined;
+//           profile.floor = undefined;
+//         }
+//       }
+
+//       // 2) If a new bedId is provided (non-null, non-empty) — allocate it
+//       if (requestedBedId) {
+//         // ensure new bed exists and is free
+//         const newBed = await Bed.findById(requestedBedId).session(session);
+//         if (!newBed) throw new Error('Selected new bed not found');
+//         if (newBed.isOccupied) throw new Error('Selected new bed is already occupied');
+
+//         // mark bed occupied and set occupant
+//         newBed.isOccupied = true;
+//         newBed.occupant = profile._id;
+//         await newBed.save({ session });
+
+//         // set profile allocation fields
+//         profile.allocatedBed = newBed._id;
+//         profile.allocatedRoom = newBed.room;
+//         profile.bedNumber = newBed.bedNumber;
+
+//         // fetch room info and set readable fields
+//         const newRoom = await Room.findById(newBed.room).session(session);
+//         if (newRoom) {
+//           profile.roomNumber = newRoom.roomNumber;
+//           profile.rentAmount = newRoom.rentAmount;
+//           if (typeof newRoom.floor !== 'undefined') {
+//             profile.floor = newRoom.floor;
+//             profile.allocatedFloor = newRoom.floor;
+//           }
+//           roomsToRecalc.add(String(newRoom._id));
+//         }
+//       }
+
+//       // 3) Merge other text updates (name/phone/etc.) into profile
+//       //    Important: avoid overwriting allocation fields from req.body inadvertently
+//       const safeBody = { ...req.body };
+//       delete safeBody.bedId; // we've already handled bedId
+//       Object.assign(profile, safeBody);
+
+//       // 4) Save profile with session
+//       await profile.save({ session });
+
+//       // 5) Recalculate room statuses for rooms we touched
+//       for (const roomIdStr of roomsToRecalc) {
+//         const roomId = new mongoose.Types.ObjectId(roomIdStr);
+//         const remainingFreeBeds = await Bed.countDocuments({
+//           room: roomId,
+//           isOccupied: false
+//         }).session(session);
+//         const room = await Room.findById(roomId).session(session);
+//         if (room) {
+//           room.status = remainingFreeBeds === 0 ? 'Full' : 'Available';
+//           await room.save({ session });
+//         }
+//       }
+
+//       await session.commitTransaction();
+//       session.endSession();
+
+//       // Return updated profile (populated)
+//       const updated = await UserProfile.findById(profile._id)
+//         .populate('allocatedBed')
+//         .populate('allocatedRoom');
+
+//       return res.json({ message: 'Profile updated and bed changed', profile: updated });
+//     } catch (err) {
+//       try {
+//         if (session && session.inTransaction()) await session.abortTransaction();
+//       } catch (e) {}
+//       if (session) session.endSession();
+//       console.error('Error updating profile:', err.message);
+//       return res.status(400).json({ message: 'Error updating profile', error: err.message });
+//     }
+//   }
+// );
+
 router.put(
   '/:id',
   upload.fields([
@@ -473,20 +684,44 @@ router.put(
       }
 
       // ---------- SIMPLE VACATE BRANCH ----------
-      // If isActive is false/"false"/"inactive"/0 => VACATE USER (release bed + set exitDate)
-      const inactiveValues = [false, 'false', 'inactive', 0];
-      const isVacating =
-        typeof req.body.isActive !== 'undefined' &&
-        inactiveValues.includes(req.body.isActive);
+      // Vacate if status = 'inactive' OR isActive is explicitly false/"false"/"inactive"/"0"
+      const inactiveTokens = ['false', 'inactive', '0'];
+
+      let isVacating = false;
+
+      if (typeof req.body.status !== 'undefined' && req.body.status !== null) {
+        const s = String(req.body.status).toLowerCase();
+        if (inactiveTokens.includes(s)) {
+          isVacating = true;
+        }
+      } else if (typeof req.body.isActive !== 'undefined' && req.body.isActive !== null) {
+        const s = String(req.body.isActive).toLowerCase();
+        // treat anything not clearly "true/active/1" as inactive
+        if (!['true', 'active', '1'].includes(s)) {
+          isVacating = true;
+        }
+      }
 
       if (isVacating) {
         try {
           session = await mongoose.startSession();
           session.startTransaction();
 
-          // mark user inactive + set exit date
+          // mark user inactive
           profile.isActive = false;
-          profile.exitDate = new Date();
+
+          // optional: if you have a `status` field in schema, store it
+          if (typeof req.body.status !== 'undefined') {
+            profile.status = req.body.status; // e.g. "inactive"
+          }
+
+          // set exitDate from body if provided, else now
+          if (req.body.exitDate) {
+            const d = new Date(req.body.exitDate);
+            profile.exitDate = isNaN(d.getTime()) ? new Date() : d;
+          } else {
+            profile.exitDate = new Date();
+          }
 
           let roomsToRecalc = new Set();
 
@@ -499,19 +734,20 @@ router.put(
               await oldBed.save({ session });
               roomsToRecalc.add(String(oldBed.room));
             }
-            // NOTE: do NOT clear profile.bedNumber / roomNumber / floor / rentAmount / allocatedRoom / allocatedBed
-            // We want to know on which bed/room this user stayed even after they are inactive.
+            // DO NOT clear profile.bedNumber / roomNumber / floor / rentAmount / allocatedRoom / allocatedBed
           }
 
-          // apply any other fields (like notes, address, etc.)
+          // apply any other fields (like notes, address, etc.), but don't override vacate fields
           const vacateBody = { ...req.body };
-          delete vacateBody.isActive; // we already set isActive
-          delete vacateBody.bedId;    // no bed changes in vacate mode
+          delete vacateBody.isActive;
+          delete vacateBody.status;
+          delete vacateBody.exitDate;
+          delete vacateBody.bedId;
           Object.assign(profile, vacateBody);
 
           await profile.save({ session });
 
-          // Recalculate room statuses
+          // Recalculate room statuses for rooms whose beds changed
           for (const roomIdStr of roomsToRecalc) {
             const roomId = new mongoose.Types.ObjectId(roomIdStr);
             const remainingFreeBeds = await Bed.countDocuments({
@@ -660,6 +896,7 @@ router.put(
     }
   }
 );
+
 
 
 

@@ -392,21 +392,69 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// router.put("/:id", async (req, res) => {
+//   try {
+//     const payment = await Payment.findById(req.params.id);
+//     if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+//     // 1️⃣ Save OLD values (including old paidAt)
+//     payment.oldValues.push({
+//       amount: payment.amount,
+//       remaining: payment.remaining,
+//       paidAt: payment.paidAt,   // 👈 first/previous payment time
+//       status: payment.status,
+//       updatedAt: new Date()
+//     });
+
+//     // 2️⃣ Update fields (but do NOT trust paidAt from body)
+//     const fields = ["amount", "remaining", "status", "fromDate", "toDate"];
+//     fields.forEach((key) => {
+//       if (req.body[key] !== undefined) {
+//         payment[key] = req.body[key];
+//       }
+//     });
+
+//     // 3️⃣ Set NEW paidAt for this change
+//     payment.paidAt = new Date();   // 👈 this becomes latest payment time
+
+//     await payment.save();
+
+//     return res.json({ message: "Payment updated with history", payment });
+//   } catch (err) {
+//     console.error("PUT /api/payments/:id error:", err);
+//     return res.status(400).json({ error: err.message });
+//   }
+// });
 router.put("/:id", async (req, res) => {
   try {
     const payment = await Payment.findById(req.params.id);
     if (!payment) return res.status(404).json({ message: "Payment not found" });
 
-    // 1️⃣ Save OLD values (including old paidAt)
+    // 1️⃣ snapshot for history (including allocation)
+    const firstAlloc = payment.allocations && payment.allocations.length
+      ? payment.allocations[0]
+      : null;
+
+    payment.oldValues = payment.oldValues || [];
     payment.oldValues.push({
       amount: payment.amount,
       remaining: payment.remaining,
-      paidAt: payment.paidAt,   // 👈 first/previous payment time
+      paidAt: payment.paidAt,
       status: payment.status,
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      allocationSnapshot: firstAlloc
+        ? {
+            month: firstAlloc.month,
+            periodStart: firstAlloc.periodStart,
+            periodEnd: firstAlloc.periodEnd,
+            expected: firstAlloc.expected,
+            paid: firstAlloc.paid,
+            unpaid: firstAlloc.unpaid
+          }
+        : null
     });
 
-    // 2️⃣ Update fields (but do NOT trust paidAt from body)
+    // 2️⃣ update top-level simple fields
     const fields = ["amount", "remaining", "status", "fromDate", "toDate"];
     fields.forEach((key) => {
       if (req.body[key] !== undefined) {
@@ -414,12 +462,55 @@ router.put("/:id", async (req, res) => {
       }
     });
 
-    // 3️⃣ Set NEW paidAt for this change
-    payment.paidAt = new Date();   // 👈 this becomes latest payment time
+    // 3️⃣ always set new paidAt (latest payment update time)
+    payment.paidAt = new Date();
+
+    // 4️⃣ ensure we have one allocation
+    if (!payment.allocations || payment.allocations.length === 0) {
+      payment.allocations = [{
+        month: null,
+        periodStart: payment.fromDate,
+        periodEnd: payment.toDate,
+        expected: 0,
+        paid: 0,
+        unpaid: 0
+      }];
+    }
+
+    const alloc = payment.allocations[0];
+
+    // 5️⃣ sync periodStart/periodEnd/month with fromDate/toDate (if changed)
+    if (payment.fromDate) alloc.periodStart = new Date(payment.fromDate);
+    if (payment.toDate) alloc.periodEnd = new Date(payment.toDate);
+
+    if (alloc.periodStart) {
+      const y = alloc.periodStart.getFullYear();
+      const mm = String(alloc.periodStart.getMonth() + 1).padStart(2, "0");
+      alloc.month = `${y}-${mm}`; // "YYYY-MM"
+    }
+
+    // 6️⃣ recompute paid / unpaid based on payment values
+    const paid = Number(payment.amount || 0);
+    const remaining = Number(payment.remaining || 0);
+
+    // keep expected as-is if already set, otherwise derive from paid+remaining
+    if (typeof alloc.expected !== "number" || isNaN(alloc.expected)) {
+      alloc.expected = paid + remaining;
+    }
+
+    alloc.paid = paid;
+    alloc.unpaid = remaining;
+
+    // 7️⃣ optionally adjust status based on remaining (if you want auto logic)
+    // if (remaining <= 0) {
+    //   payment.status = "paid";
+    // } else if (!payment.status) {
+    //   payment.status = "unpaid";
+    // }
 
     await payment.save();
 
-    return res.json({ message: "Payment updated with history", payment });
+    return res.json({ message: "Payment updated with history and allocations", payment });
   } catch (err) {
     console.error("PUT /api/payments/:id error:", err);
     return res.status(400).json({ error: err.message });
