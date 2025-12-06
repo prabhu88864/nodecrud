@@ -250,9 +250,10 @@ router.get("/overdue-users", async (req, res) => {
     const sumPipeline = baseForTotals.concat([
       {
         $group: {
-         
+          _id: null,
           totalUnpaidAmount: { $sum: "$unpaidTotal" },
-         
+          totalExpectedAmount: { $sum: "$expectedTotal" },
+          totalPaidAmount: { $sum: "$paidTotal" }
         }
       }
     ]);
@@ -266,11 +267,10 @@ router.get("/overdue-users", async (req, res) => {
 
     // if you want "total" to mean "total unpaid amount":
     return res.json({
+      total: totals.totalUnpaidAmount,           // 👈 total = sum of unpaid
  
-      totalUnpaidAmount: totals.totalUnpaidAmount,
-                                     // how many users overdue
       count: rows.length,                        // how many in this page
-    
+     
     });
   } catch (err) {
     console.error("GET /overdue-users error:", err);
