@@ -7,6 +7,8 @@ import Bed from "../models/bed.js";
 import Room from "../models/room.js";
 import mongoose from "mongoose";  
 import { createFirstPaymentForUser } from '../services/paymentService.js';
+import Payment from "../models/payment.js";
+
 
 const router = express.Router();
 
@@ -702,7 +704,7 @@ router.put(
         }
       }
 
-            if (isVacating) {
+      if (isVacating) {
         try {
           // 1️⃣ BEFORE doing anything, check pending dues
 
