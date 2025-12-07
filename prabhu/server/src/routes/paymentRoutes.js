@@ -138,6 +138,148 @@ router.get("/summary-report", async (req, res) => {
 
 
 // GET /api/payments/overdue-users?minMonths=2&minUnpaid=1&limit=100&skip=0
+// router.get("/overdue-users", async (req, res) => {
+//   try {
+//     const minMonths = Math.max(0, Number(req.query.minMonths || 1));
+//     const minUnpaid = Math.max(0, Number(req.query.minUnpaid || 1));
+//     const limit = Math.min(1000, Number(req.query.limit || 100));
+//     const skip = Math.max(0, Number(req.query.skip || 0));
+//     const q = (req.query.q || "").trim();
+
+//     // base match: only active users with joinedDate
+//     const baseMatch = {
+//       joinedDate: { $exists: true, $ne: null },
+//       isActive: { $ne: false }
+//     };
+
+//     // if q is present, add search conditions
+//     if (q.length > 0) {
+//       const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+//       baseMatch.$or = [
+//         { fullName: re },
+//         { phone: re },
+//         { roomNumber: re },
+//         { bedNumber: re }
+//       ];
+//     }
+
+//     const pipeline = [
+//       { $match: baseMatch },
+
+//       {
+//         $addFields: {
+//           monthsPassed: {
+//             $dateDiff: { startDate: "$joinedDate", endDate: "$$NOW", unit: "month" }
+//           }
+//         }
+//       },
+
+//       { $match: { monthsPassed: { $gte: minMonths } } },
+
+//       {
+//         $lookup: {
+//           from: "payments",
+//           let: { uid: "$_id" },
+//           pipeline: [
+//             { $match: { $expr: { $eq: ["$user", "$$uid"] } } },
+//             {
+//               $group: {
+//                 _id: null,
+//                 totalPaid: { $sum: { $ifNull: ["$amount", 0] } }
+//               }
+//             }
+//           ],
+//           as: "paidAgg"
+//         }
+//       },
+
+//       {
+//         $addFields: {
+//           paidTotal: { $ifNull: [{ $arrayElemAt: ["$paidAgg.totalPaid", 0] }, 0] },
+//           rentPerMonth: { $ifNull: ["$rentAmount", 0] }
+//         }
+//       },
+
+//       {
+//         $addFields: {
+//           expectedTotal: { $multiply: ["$monthsPassed", "$rentPerMonth"] },
+//           unpaidTotal: {
+//             $max: [
+//               { $subtract: [{ $multiply: ["$monthsPassed", "$rentPerMonth"] }, "$paidTotal"] },
+//               0
+//             ]
+//           }
+//         }
+//       },
+
+//       { $match: { unpaidTotal: { $gte: minUnpaid } } },
+
+//       {
+//         $project: {
+//           _id: 1,
+//           fullName: 1,
+//           phone: 1,
+//           roomNumber: 1,
+//           bedNumber: 1,
+//           joinedDate: 1,
+//           monthsPassed: 1,
+//           rentPerMonth: 1,
+//           expectedTotal: 1,
+//           paidTotal: 1,
+//           unpaidTotal: 1
+//         }
+//       },
+
+//       { $sort: { unpaidTotal: -1, fullName: 1 } },
+//       { $skip: skip },
+//       { $limit: limit }
+//     ];
+
+//     // rows for this page
+//     const rows = await UserProfile.aggregate(pipeline).allowDiskUse(true);
+
+//     // 👉 pipeline without sort/skip/limit, to compute totals on all matching users
+//     const baseForTotals = pipeline.slice(0, pipeline.length - 3);
+
+//     // total overdue users count
+//     const countPipeline = baseForTotals.concat([{ $count: "totalUsers" }]);
+//     const countRes = await UserProfile.aggregate(countPipeline).allowDiskUse(true);
+//     const totalUsers = countRes[0]?.totalUsers || 0;
+
+//     // sum of unpaidTotal / expectedTotal / paidTotal
+//     const sumPipeline = baseForTotals.concat([
+//       {
+//         $group: {
+//           _id: null,
+//           totalUnpaidAmount: { $sum: "$unpaidTotal" },
+//           totalExpectedAmount: { $sum: "$expectedTotal" },
+//           totalPaidAmount: { $sum: "$paidTotal" }
+//         }
+//       }
+//     ]);
+
+//     const sumRes = await UserProfile.aggregate(sumPipeline).allowDiskUse(true);
+//     const totals = sumRes[0] || {
+//       totalUnpaidAmount: 0,
+//       totalExpectedAmount: 0,
+//       totalPaidAmount: 0
+//     };
+
+//     // if you want "total" to mean "total unpaid amount":
+//     return res.json({
+//       total: totals.totalUnpaidAmount,           // 👈 total = sum of unpaid
+//                                     // how many users overdue
+//       count: rows.length,                        // how many in this page
+//       results: rows
+//     });
+//   } catch (err) {
+//     console.error("GET /overdue-users error:", err);
+//     return res.status(500).json({ error: err.message });
+//   }
+// });
+
+
+
 router.get("/overdue-users", async (req, res) => {
   try {
     const minMonths = Math.max(0, Number(req.query.minMonths || 1));
@@ -145,12 +287,21 @@ router.get("/overdue-users", async (req, res) => {
     const limit = Math.min(1000, Number(req.query.limit || 100));
     const skip = Math.max(0, Number(req.query.skip || 0));
     const q = (req.query.q || "").trim();
+    const { userId } = req.query;   // 👈 NEW
 
     // base match: only active users with joinedDate
     const baseMatch = {
       joinedDate: { $exists: true, $ne: null },
       isActive: { $ne: false }
     };
+
+    // 🔹 if userId is sent -> filter only that user
+    if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ message: "Invalid userId" });
+      }
+      baseMatch._id = new mongoose.Types.ObjectId(userId);
+    }
 
     // if q is present, add search conditions
     if (q.length > 0) {
@@ -235,18 +386,10 @@ router.get("/overdue-users", async (req, res) => {
       { $limit: limit }
     ];
 
-    // rows for this page
     const rows = await UserProfile.aggregate(pipeline).allowDiskUse(true);
 
-    // 👉 pipeline without sort/skip/limit, to compute totals on all matching users
+    // total unpaid amount for all filtered users
     const baseForTotals = pipeline.slice(0, pipeline.length - 3);
-
-    // total overdue users count
-    const countPipeline = baseForTotals.concat([{ $count: "totalUsers" }]);
-    const countRes = await UserProfile.aggregate(countPipeline).allowDiskUse(true);
-    const totalUsers = countRes[0]?.totalUsers || 0;
-
-    // sum of unpaidTotal / expectedTotal / paidTotal
     const sumPipeline = baseForTotals.concat([
       {
         $group: {
@@ -265,11 +408,9 @@ router.get("/overdue-users", async (req, res) => {
       totalPaidAmount: 0
     };
 
-    // if you want "total" to mean "total unpaid amount":
     return res.json({
-      total: totals.totalUnpaidAmount,           // 👈 total = sum of unpaid
-                                    // how many users overdue
-      count: rows.length,                        // how many in this page
+      total: totals.totalUnpaidAmount,
+      count: rows.length,
       results: rows
     });
   } catch (err) {
@@ -277,6 +418,7 @@ router.get("/overdue-users", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 
 
