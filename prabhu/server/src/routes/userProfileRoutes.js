@@ -48,7 +48,7 @@ router.get("/:id/rent-preview", async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 1️⃣ get monthly rent from profile or allocatedRoom
+    // get monthly rent from profile or allocatedRoom
     const rentPerMonth =
       Number(user.rentAmount) ||
       Number(user.allocatedRoom && user.allocatedRoom.rentAmount) ||
@@ -58,13 +58,20 @@ router.get("/:id/rent-preview", async (req, res) => {
       return res.status(400).json({ message: "User has no rentAmount configured" });
     }
 
-    // 2️⃣ calculate days between fromDate and toDate (inclusive)
-    const MS_PER_DAY = 1000 * 60 * 60 * 24;
-    const days = Math.round((end - start) / MS_PER_DAY) + 1; // inclusive
+    // 👉 MONTH-WISE CALCULATION (no per-day)
+    function fullMonthsBetween(d1, d2) {
+      let months =
+        (d2.getFullYear() - d1.getFullYear()) * 12 +
+        (d2.getMonth() - d1.getMonth());
 
-    // 3️⃣ simple daily rent = monthly / 30 (you can change if you want real month days)
-    const dailyRent = rentPerMonth / 30;
-    const expectedRent = Math.round(dailyRent * days);
+      if (d2.getDate() < d1.getDate()) {
+        months -= 1;
+      }
+      return Math.max(0, months);
+    }
+
+    const monthsInRange = fullMonthsBetween(start, end);
+    const expectedRent = monthsInRange * rentPerMonth;
 
     return res.json({
       user: {
@@ -76,14 +83,15 @@ router.get("/:id/rent-preview", async (req, res) => {
       },
       fromDate: start,
       toDate: end,
-      days,
-      expectedRent
+      monthsInRange,   // e.g. 1 for 05-01-2025 to 05-02-2025
+      expectedRent     // monthsInRange * rentPerMonth
     });
   } catch (err) {
     console.error("GET /user-profiles/:id/rent-preview error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 // CREATE — accept two files: idProofImage and userImage
 // Use upload.fields to accept multiple named file fields
