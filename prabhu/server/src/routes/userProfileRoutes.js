@@ -22,6 +22,69 @@ function deleteStoredFile(storedPath) {
   }
 }
 
+
+// router.get("/:id/rent-preview", async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { fromDate, toDate } = req.query;
+
+//     if (!fromDate || !toDate) {
+//       return res.status(400).json({ message: "fromDate and toDate are required" });
+//     }
+
+//     const start = new Date(fromDate);
+//     const end = new Date(toDate);
+
+//     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+//       return res.status(400).json({ message: "Invalid fromDate or toDate" });
+//     }
+
+//     if (end < start) {
+//       return res.status(400).json({ message: "toDate cannot be before fromDate" });
+//     }
+
+//     // load user with room info (for rentAmount)
+//     const user = await UserProfile.findById(id).populate("allocatedRoom");
+//     if (!user) {
+//       return res.status(404).json({ message: "User not found" });
+//     }
+
+//     // 1️⃣ get monthly rent from profile or allocatedRoom
+//     const rentPerMonth =
+//       Number(user.rentAmount) ||
+//       Number(user.allocatedRoom && user.allocatedRoom.rentAmount) ||
+//       0;
+
+//     if (!rentPerMonth) {
+//       return res.status(400).json({ message: "User has no rentAmount configured" });
+//     }
+
+//     // 2️⃣ calculate days between fromDate and toDate (inclusive)
+//     const MS_PER_DAY = 1000 * 60 * 60 * 24;
+//     const days = Math.round((end - start) / MS_PER_DAY) + 1; // inclusive
+
+//     // 3️⃣ simple daily rent = monthly / 30 (you can change if you want real month days)
+//     const dailyRent = rentPerMonth / 30;
+//     const expectedRent = Math.round(dailyRent * days);
+
+//     return res.json({
+//       user: {
+//         _id: user._id,
+//         fullName: user.fullName,
+//         roomNumber: user.roomNumber,
+//         bedNumber: user.bedNumber,
+//         rentPerMonth
+//       },
+//       fromDate: start,
+//       toDate: end,
+//       days,
+//       expectedRent
+//     });
+//   } catch (err) {
+//     console.error("GET /user-profiles/:id/rent-preview error:", err);
+//     return res.status(500).json({ error: err.message });
+//   }
+// });
 router.get("/:id/rent-preview", async (req, res) => {
   try {
     const { id } = req.params;
