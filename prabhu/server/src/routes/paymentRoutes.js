@@ -438,34 +438,38 @@ router.post("/", async (req, res) => {
     // if you're using month-style simple allocation:
     // require 'month' OR require fromDate/toDate depending on your flow.
     // here we allow both flows; if month provided use month; else use fromDate/toDate
-    const user = await UserProfile.findById(userId).session(session);
+        const user = await UserProfile.findById(userId).session(session);
     if (!user) throw new Error("User not found");
 
-    // Simple PG logic: one allocation per payment (no splitting)
-    // Determine period (prefer month if provided)
-    let periodStart = null;
-    let periodEnd = null;
-    let monthLabel = null;
-    if (month) {
-      monthLabel = month;
-      const [y, m] = month.split("-").map(Number);
-      periodStart = new Date(y, m - 1, 1, 0, 0, 0);
-      periodEnd = new Date(y, m, 0, 23, 59, 59);
-    } else if (fromDate && toDate) {
-      periodStart = new Date(fromDate);
-      periodEnd = new Date(toDate);
-      // derive month label from periodStart (optional)
-      const y = periodStart.getFullYear();
-      const mm = String(periodStart.getMonth() + 1).padStart(2, "0");
-      monthLabel = `${y}-${mm}`;
-    } else {
-      throw new Error("Either month (YYYY-MM) or fromDate & toDate required");
+    // 🔹 1) Get base rent (from profile or its room)
+    let baseRent = 0;
+
+    if (typeof user.rentAmount === "number" && !isNaN(user.rentAmount)) {
+      baseRent = user.rentAmount;
+    } else if (user.allocatedRoom && typeof user.allocatedRoom.rentAmount === "number") {
+      // only works if allocatedRoom is populated; otherwise you can ignore this branch
+      baseRent = user.allocatedRoom.rentAmount;
     }
 
-    const expected = user.rentAmount || user.allocatedRoom.rentAmount;
+    // 🔹 2) Get discount from user profile
+    const discount = typeof user.discount === "number" && !isNaN(user.discount)
+      ? user.discount
+      : 0;
+
+    // 🔹 3) Effective rent after discount (per month)
+    const expected = Math.max(baseRent - discount, 0);
+
+    // 🔹 4) Paid & unpaid
     const paid = Number(amount);
-    const unpaid = Number(remaining);
-    
+
+    let unpaid;
+    if (typeof remaining !== "undefined" && remaining !== null) {
+      // if frontend sends remaining explicitly, respect it
+      unpaid = Number(remaining);
+    } else {
+      // otherwise compute remaining = expected - paid
+      unpaid = Math.max(expected - paid, 0);
+    }
 
     const allocation = {
       month: monthLabel,

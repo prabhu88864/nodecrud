@@ -259,6 +259,11 @@ router.post(
       const data = req.body || {};
       const bedId = data.bedId;
 
+       if (typeof data.discount !== "undefined") {
+        const d = Number(data.discount);
+        data.discount = isNaN(d) ? 0 : d;   // fallback to 0 if invalid
+      }
+
       if (req.files && req.files.idProofImage && req.files.idProofImage[0]) {
         data.idProofImage = `/uploads/idproofs/${req.files.idProofImage[0].filename}`;
       }
@@ -817,6 +822,11 @@ router.put(
       if (req.files && req.files.userImage && req.files.userImage[0]) {
         if (profile.userImage) deleteStoredFile(profile.userImage);
         req.body.userImage = `/uploads/users/${req.files.userImage[0].filename}`;
+      }
+
+       if (typeof req.body.discount !== "undefined") {
+        const d = Number(req.body.discount);
+        req.body.discount = isNaN(d) ? 0 : d;   // fallback to 0 if invalid
       }
 
       // ---------- SIMPLE VACATE BRANCH ----------

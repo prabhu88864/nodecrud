@@ -25,6 +25,7 @@ const userProfileSchema = new mongoose.Schema({
 
   damageCharges: { type: Number, default: 0 },
   advanceAmount: { type: Number, default: 0 },
+  discount: { type: Number, default: 0 }, 
 
   isActive: { type: Boolean, default: true },
 

@@ -59,14 +59,67 @@ router.get("/available-floors", async (req, res) => {
   }
 });
 
+
+
+// GET /api/rooms/available-blocks?floor=First
+router.get("/available-blocks", async (req, res) => {
+  try {
+    const { floor } = req.query;
+    if (!floor) {
+      return res.status(400).json({ message: "floor is required" });
+    }
+
+    const blocks = await Room.aggregate([
+      { $match: { floor } },  // filter by floor first
+
+      {
+        $lookup: {
+          from: "beds",
+          localField: "_id",
+          foreignField: "room",
+          as: "beds"
+        }
+      },
+      {
+        $addFields: {
+          freeBedsCount: {
+            $size: {
+              $filter: {
+                input: "$beds",
+                as: "b",
+                cond: { $eq: ["$$b.isOccupied", false] }
+              }
+            }
+          }
+        }
+      },
+      { $match: { freeBedsCount: { $gt: 0 } } },
+      {
+        $group: {
+          _id: "$block"
+        }
+      },
+      { $project: { _id: 0, block: "$_id" } },
+      { $sort: { block: 1 } }
+    ]);
+
+    return res.json(blocks.map(b => b.block));
+  } catch (err) {
+    console.error("available-blocks error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* =============
    2) Get available rooms (optional ?floor=First)
    ============= */
 router.get("/available-rooms", async (req, res) => {
   try {
-    const { floor } = req.query;
+    const { floor, block } = req.query;
     const matchStage = {};
+
     if (typeof floor !== "undefined") matchStage.floor = floor;
+    if (typeof block !== "undefined") matchStage.block = block;
 
     const pipeline = [
       { $match: matchStage },
@@ -102,6 +155,7 @@ router.get("/available-rooms", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 /* =============
    3) Get available beds (existing endpoint)
