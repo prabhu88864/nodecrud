@@ -337,6 +337,8 @@ router.post(
       if (room) {
         profile.roomNumber = room.roomNumber;
         profile.rentAmount = room.rentAmount;
+         profile.block = room.block;           // 👈 NEW
+  profile.allocatedBlock = room.block;  // 👈 OPTIONAL
       }
        if (typeof room.floor !== "undefined") {
     profile.floor = room.floor;          // human-readable floor on profile
@@ -1031,6 +1033,8 @@ router.put(
           profile.rentAmount = undefined;
           profile.allocatedFloor = undefined;
           profile.floor = undefined;
+          profile.block = undefined;            // 👈 NEW
+          profile.allocatedBlock = undefined; 
         }
       }
 
@@ -1056,6 +1060,8 @@ router.put(
         if (newRoom) {
           profile.roomNumber = newRoom.roomNumber;
           profile.rentAmount = newRoom.rentAmount;
+           profile.block = newRoom.block;          // 👈 NEW
+  profile.allocatedBlock = newRoom.block; 
           if (typeof newRoom.floor !== 'undefined') {
             profile.floor = newRoom.floor;
             profile.allocatedFloor = newRoom.floor;

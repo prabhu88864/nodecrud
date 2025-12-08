@@ -13,9 +13,9 @@ const userProfileSchema = new mongoose.Schema({
   idProofImage: String,
   userImage: String,
 
-  // floor value saved when allocating user
   floor: { type: String },
-
+  block: { type: String },           // 👈 ADD THIS
+  
   roomNumber: String,
   rentAmount: Number,
   bedNumber: String,
@@ -25,19 +25,19 @@ const userProfileSchema = new mongoose.Schema({
 
   damageCharges: { type: Number, default: 0 },
   advanceAmount: { type: Number, default: 0 },
-  discount: { type: Number, default: 0 }, 
+  discount: { type: Number, default: 0 },
 
   isActive: { type: Boolean, default: true },
 
-  // these are correct
   allocatedRoom: { type: mongoose.Schema.Types.ObjectId, ref: "Room" },
   allocatedBed: { type: mongoose.Schema.Types.ObjectId, ref: "Bed" },
 
-  // ➕ ADD THIS
   allocatedFloor: { type: String },
+  allocatedBlock: { type: String },   // 👈 OPTIONAL (if you want)
 
   createdAt: { type: Date, default: Date.now }
 });
+
 
 const UserProfile = mongoose.model('UserProfile', userProfileSchema);
 
