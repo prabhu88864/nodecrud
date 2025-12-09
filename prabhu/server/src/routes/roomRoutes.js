@@ -60,28 +60,30 @@ router.get("/:id", async (req, res) => {
    ============================ */
 router.put("/:id", async (req, res) => {
   try {
-    const { roomNumber, rentAmount, beds,floor ,block} = req.body;
+    const { roomNumber, rentAmount, beds, floor, block } = req.body;
 
     const room = await Room.findById(req.params.id);
     if (!room) return res.status(404).json({ message: "Room not found" });
 
-    // update room fields
     if (roomNumber) room.roomNumber = roomNumber;
     if (rentAmount) room.rentAmount = rentAmount;
-     if (floor) room.floor = floor;
-     if (block) room.block = block; 
+    if (floor) room.floor = floor;
+    if (block) room.block = block;
 
-    // update beds (optional)
+    // beds update → ADD NEW BEDS ONLY, do NOT delete anything
     if (beds && beds.length > 0) {
-      // delete old beds
-      await Bed.deleteMany({ room: room._id });
+      const existingBeds = await Bed.find({ room: room._id });
 
-      // create new beds
+      const existingNumbers = existingBeds.map(b => b.bedNumber);
+      const newBedNumbers = beds.filter(b => !existingNumbers.includes(b));
+
       const newBeds = await Promise.all(
-        beds.map((b) => Bed.create({ bedNumber: b, room: room._id }))
+        newBedNumbers.map(b =>
+          Bed.create({ bedNumber: b, room: room._id })
+        )
       );
 
-      room.beds = newBeds.map((b) => b._id);
+      room.beds = [...room.beds, ...newBeds.map(b => b._id)];
     }
 
     await room.save();
@@ -91,6 +93,8 @@ router.put("/:id", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+
 
 /* ============================
    DELETE ROOM + BEDS
