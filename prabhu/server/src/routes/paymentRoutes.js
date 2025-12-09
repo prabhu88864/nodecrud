@@ -470,6 +470,28 @@ router.post("/", async (req, res) => {
       // otherwise compute remaining = expected - paid
       unpaid = Math.max(expected - paid, 0);
     }
+       let periodStart = null;
+    let periodEnd = null;
+    let monthLabel = null;
+
+    if (month) {
+      monthLabel = month;
+      const [y, m] = month.split("-").map(Number);
+      if (!y || !m) throw new Error("Invalid month format, expected YYYY-MM");
+      periodStart = new Date(y, m - 1, 1, 0, 0, 0);
+      periodEnd = new Date(y, m, 0, 23, 59, 59);
+    } else if (fromDate && toDate) {
+      periodStart = new Date(fromDate);
+      periodEnd = new Date(toDate);
+      if (isNaN(periodStart.getTime()) || isNaN(periodEnd.getTime())) {
+        throw new Error("Invalid fromDate or toDate");
+      }
+      const y = periodStart.getFullYear();
+      const mm = String(periodStart.getMonth() + 1).padStart(2, "0");
+      monthLabel = `${y}-${mm}`;
+    } else {
+      throw new Error("Either month (YYYY-MM) or fromDate & toDate required");
+    }
 
     const allocation = {
       month: monthLabel,
