@@ -182,37 +182,185 @@ router.get("/available-rooms", async (req, res) => {
 // });
 
 
+// router.get("/available-beds", async (req, res) => {
+//   try {
+//     const { roomId, full } = req.query;
+
+//     // helper: treat "true", "1", "yes" (case-insensitive) as true
+//     const parseBool = v =>
+//       typeof v === "string" && /^(1|true|yes)$/i.test(v);
+
+//     const wantFull = parseBool(full);
+
+//     // Build base filter. If full requested, no isOccupied filter;
+//     // otherwise only return free beds.
+//     const filter = {};
+//     if (!wantFull) filter.isOccupied = false;
+
+//     if (roomId) {
+//       if (!mongoose.Types.ObjectId.isValid(roomId)) {
+//         return res.status(400).json({ message: "Invalid roomId" });
+//       }
+//       filter.room = new mongoose.Types.ObjectId(roomId);
+//     }
+
+//     // populate room fields you care about
+//     const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+
+//     res.json(beds);
+//   } catch (err) {
+//     console.error("available-beds error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 router.get("/available-beds", async (req, res) => {
   try {
     const { roomId, full } = req.query;
-
-    // helper: treat "true", "1", "yes" (case-insensitive) as true
     const parseBool = v =>
       typeof v === "string" && /^(1|true|yes)$/i.test(v);
-
     const wantFull = parseBool(full);
 
-    // Build base filter. If full requested, no isOccupied filter;
-    // otherwise only return free beds.
-    const filter = {};
-    if (!wantFull) filter.isOccupied = false;
+    // If client did not request full, keep old simple behaviour:
+    if (!wantFull) {
+      const filter = { isOccupied: false };
+      if (roomId) {
+        if (!mongoose.Types.ObjectId.isValid(roomId)) {
+          return res.status(400).json({ message: "Invalid roomId" });
+        }
+        filter.room = new mongoose.Types.ObjectId(roomId);
+      }
+      const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+      return res.json(beds);
+    }
 
+    // FULL requested -> return all beds and include due/payments for occupied beds.
+    // We'll use aggregation so we can calculate per-bed unpaid amount efficiently.
+    const match = {};
     if (roomId) {
       if (!mongoose.Types.ObjectId.isValid(roomId)) {
         return res.status(400).json({ message: "Invalid roomId" });
       }
-      filter.room = new mongoose.Types.ObjectId(roomId);
+      match.room = new mongoose.Types.ObjectId(roomId);
     }
 
-    // populate room fields you care about
-    const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+    const pipeline = [
+      { $match: match },
 
-    res.json(beds);
+      // ensure room info (rentAmount, roomNumber)
+      {
+        $lookup: {
+          from: "rooms",
+          localField: "room",
+          foreignField: "_id",
+          as: "roomDoc"
+        }
+      },
+      { $unwind: { path: "$roomDoc", preserveNullAndEmptyArrays: true } },
+
+      // try to lookup occupant: support either bed.user or bed.occupant references
+      {
+        $lookup: {
+          from: "userprofiles", // adjust collection name if your user collection is different
+          let: { uid1: "$user", uid2: "$occupant" },
+          pipeline: [
+            { $match: { $expr: { $or: [{ $eq: ["$_id", "$$uid1"] }, { $eq: ["$_id", "$$uid2"] }] } } },
+            // pick fields we'll need for calculations and response
+            { $project: { fullName: 1, phone: 1, joinedDate: 1, isActive: 1, roomNumber: 1, bedNumber: 1, rentAmount: 1 } }
+          ],
+          as: "occupantDocs"
+        }
+      },
+      // keep a single occupant doc (if exists)
+      { $addFields: { occupantDoc: { $arrayElemAt: ["$occupantDocs", 0] } } },
+
+      // For occupied beds, lookup payments of the occupant and compute sums.
+      {
+        $lookup: {
+          from: "payments",
+          let: { occId: "$occupantDoc._id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$user", "$$occId"] } } },
+            { $group: { _id: null, totalPaid: { $sum: { $ifNull: ["$amount", 0] } } } }
+          ],
+          as: "paidAgg"
+        }
+      },
+      {
+        $addFields: {
+          paidTotal: { $ifNull: [{ $arrayElemAt: ["$paidAgg.totalPaid", 0] }, 0] },
+          rentPerMonth: {
+            $ifNull: [
+              // use bed->rentAmount if present, else room.rentAmount
+              "$rentAmount",
+              "$roomDoc.rentAmount",
+              0
+            ]
+          }
+        }
+      },
+
+      // compute monthsPassed and expected/unpaid only if there is an occupantDoc and the bed is occupied
+      {
+        $addFields: {
+          monthsPassed: {
+            $cond: [
+              { $and: [{ $ifNull: ["$occupantDoc.joinedDate", false] }, { $eq: ["$isOccupied", true] }] },
+              { $dateDiff: { startDate: "$occupantDoc.joinedDate", endDate: "$$NOW", unit: "month" } },
+              0
+            ]
+          }
+        }
+      },
+
+      {
+        $addFields: {
+          expectedTotal: { $multiply: ["$monthsPassed", "$rentPerMonth"] },
+          unpaidTotal: {
+            $max: [
+              { $subtract: [{ $multiply: ["$monthsPassed", "$rentPerMonth"] }, "$paidTotal"] },
+              0
+            ]
+          }
+        }
+      },
+
+      // project what we want returned per bed
+      {
+        $project: {
+          _id: 1,
+          bedNumber: 1,
+          isOccupied: 1,
+          room: "$roomDoc._id",
+          roomNumber: "$roomDoc.roomNumber",
+          rentAmount: "$roomDoc.rentAmount",
+          // occupant summary (if any)
+          occupant: {
+            _id: "$occupantDoc._id",
+            fullName: "$occupantDoc.fullName",
+            phone: "$occupantDoc.phone",
+            joinedDate: "$occupantDoc.joinedDate"
+          },
+          // payment/due info only meaningful when occupied & occupant exists
+          monthsPassed: 1,
+          rentPerMonth: 1,
+          expectedTotal: 1,
+          paidTotal: 1,
+          unpaidTotal: 1
+        }
+      },
+
+      { $sort: { bedNumber: 1 } }
+    ];
+
+    const results = await Bed.aggregate(pipeline).allowDiskUse(true);
+
+    return res.json(results);
   } catch (err) {
     console.error("available-beds error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
+
 /* =============
    4) Get beds for a room (all beds, with isOccupied flag)
    Example: GET /api/rooms/:id/beds
