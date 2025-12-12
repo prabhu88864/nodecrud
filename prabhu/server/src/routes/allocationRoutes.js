@@ -161,10 +161,41 @@ router.get("/available-rooms", async (req, res) => {
    3) Get available beds (existing endpoint)
    Optional query: ?roomId=xxx
    ============= */
+// router.get("/available-beds", async (req, res) => {
+//   try {
+//     const { roomId } = req.query;
+//     const filter = { isOccupied: false };
+
+//     if (roomId) {
+//       if (!mongoose.Types.ObjectId.isValid(roomId)) {
+//         return res.status(400).json({ message: "Invalid roomId" });
+//       }
+//       filter.room = new mongoose.Types.ObjectId(roomId);
+//     }
+
+//     const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+//     res.json(beds);
+//   } catch (err) {
+//     console.error("available-beds error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+
 router.get("/available-beds", async (req, res) => {
   try {
-    const { roomId } = req.query;
-    const filter = { isOccupied: false };
+    const { roomId, full } = req.query;
+
+    // helper: treat "true", "1", "yes" (case-insensitive) as true
+    const parseBool = v =>
+      typeof v === "string" && /^(1|true|yes)$/i.test(v);
+
+    const wantFull = parseBool(full);
+
+    // Build base filter. If full requested, no isOccupied filter;
+    // otherwise only return free beds.
+    const filter = {};
+    if (!wantFull) filter.isOccupied = false;
 
     if (roomId) {
       if (!mongoose.Types.ObjectId.isValid(roomId)) {
@@ -173,14 +204,15 @@ router.get("/available-beds", async (req, res) => {
       filter.room = new mongoose.Types.ObjectId(roomId);
     }
 
+    // populate room fields you care about
     const beds = await Bed.find(filter).populate("room", "roomNumber rentAmount");
+
     res.json(beds);
   } catch (err) {
     console.error("available-beds error:", err);
     res.status(500).json({ error: err.message });
   }
 });
-
 /* =============
    4) Get beds for a room (all beds, with isOccupied flag)
    Example: GET /api/rooms/:id/beds
