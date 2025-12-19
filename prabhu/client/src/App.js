@@ -1,79 +1,144 @@
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from "react-router-dom";
-import { useSelector, useDispatch } from "react-redux";
-import { AppBar, Toolbar, Button, Container, Typography, Box } from "@mui/material";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { Container } from "@mui/material";
 
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
+
+
+import PaymentDetails from "./components/PaymentDetails";
+import Checkout from "./components/Checkout";
+import Yearlyreport from "./components/Yearlyreport";
+import Remaingdues from "./components/Remaingdues";
+import Payments from "./components/Payments";
+import Availablerooms from "./components/Availablerooms";
+import Rooms from "./components/Rooms";
+import Usersreport from "./components/Usersreport";
+import Registeruser from "./components/Registeruser";
 import Login from "./components/Login";
 import Register from "./components/Register";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Dashboard from "./components/Dashboard";
-import { logoutUser } from "./redux/actions/loginAction";
-
-function TopBar() {
-  const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const { isLoggedIn, user } = useSelector((state) => state.login || {});
-
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    dispatch(logoutUser());
-    navigate("/login", { replace: true });
-  };
-
-  return (
-    <AppBar position="static" color="primary">
-      <Toolbar>
-        <Typography variant="h6" sx={{ mr: 2 }}>
-          Discount Wala
-        </Typography>
-
-        {/* spacer */}
-        <Box sx={{ flexGrow: 1 }} />
-
-        {!isLoggedIn ? (
-          <>
-            <Button color="inherit" component={Link} to="/login">
-              Login
-            </Button>
-            <Button color="inherit" component={Link} to="/register">
-              Register
-            </Button>
-          </>
-        ) : (
-          <>
-           
-
-            <Button color="inherit" onClick={handleLogout}>
-              Logout
-            </Button>
-          </>
-        )}
-      </Toolbar>
-    </AppBar>
-  );
-}
 
 export default function App() {
   return (
     <Router>
-      <TopBar />
-      <Container sx={{ mt: 4 }}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+      <>
+        {/* GLOBAL TOAST CONTAINER – required for all toast.* calls */}
+        <ToastContainer
+          position="top-right"
+          autoClose={3000}
+          hideProgressBar={false}
+          newestOnTop={false}
+          closeOnClick
+          rtl={false}
+          pauseOnFocusLoss
+          draggable
+          pauseOnHover
+          theme="light"
+        />
 
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
+        <Container sx={{ mt: 4 }}>
+          <Routes>
+            {/* PUBLIC ROUTES */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-          {/* default */}
-          <Route path="*" element={<Login />} />
-        </Routes>
-      </Container>
+            {/* PROTECTED ROUTES */}
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Registeruser"
+              element={
+                <ProtectedRoute>
+                  <Registeruser />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/usersreport"
+              element={
+                <ProtectedRoute>
+                  <Usersreport />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Rooms"
+              element={
+                <ProtectedRoute>
+                  <Rooms />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Availablerooms"
+              element={
+                <ProtectedRoute>
+                  <Availablerooms />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Payments"
+              element={
+                <ProtectedRoute>
+                  <Payments />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Remaingdues"
+              element={
+                <ProtectedRoute>
+                  <Remaingdues />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Yearlyreport"
+              element={
+                <ProtectedRoute>
+                  <Yearlyreport />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/Checkout"
+              element={
+                <ProtectedRoute>
+                  <Checkout />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/PaymentDetails/:id"
+              element={
+                <ProtectedRoute>
+                  <PaymentDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* DEFAULT */}
+            <Route path="*" element={<Login />} />
+          </Routes>
+        </Container>
+      </>
     </Router>
   );
 }
