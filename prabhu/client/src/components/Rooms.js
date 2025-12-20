@@ -48,7 +48,7 @@ export default function Rooms() {
 
   const fetchBedAllocations = async () => {
     try {
-      const res = await axios.get(`${_apiBase}api/allocation/available-beds?full=true`);
+      const res = await axios.get(`${_apiBase}/api/allocation/available-beds?full=true`);
       setBedAllocations(res.data || []);
     } catch (err) {
       setBedAllocations([]);
