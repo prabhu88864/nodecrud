@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
+
+// build API base from BASE_URL, trimming any trailing slash
+const _apiBase = (BASE_URL || "").replace(/\/+$/, "");
 
 export default function Rooms() {
   const [rooms, setRooms] = useState([]);
@@ -35,7 +39,7 @@ export default function Rooms() {
 
   const fetchRooms = async () => {
     try {
-      const res = await axios.get("http://localhost:3000/api/rooms");
+      const res = await axios.get(`${_apiBase}/api/rooms`);
       setRooms(res.data || []);
     } catch (err) {
       alert("Failed to load rooms.");
@@ -44,7 +48,7 @@ export default function Rooms() {
 
   const fetchBedAllocations = async () => {
     try {
-      const res = await axios.get("http://localhost:3000/api/allocation/available-beds?full=true");
+      const res = await axios.get(`${_apiBase}api/allocation/available-beds?full=true`);
       setBedAllocations(res.data || []);
     } catch (err) {
       setBedAllocations([]);
@@ -53,7 +57,7 @@ export default function Rooms() {
 
   const fetchDetailedBeds = async () => {
     try {
-      const res = await axios.get("http://localhost:3000/api/beds/details");
+      const res = await axios.get(`${_apiBase}/api/beds/details`);
       if (Array.isArray(res.data)) {
         setBedAllocations(res.data);
       }
@@ -126,10 +130,10 @@ export default function Rooms() {
     }
     try {
       if (editingRoomId) {
-        await axios.put(`http://localhost:3000/api/rooms/${editingRoomId}`, body);
+        await axios.put(`${_apiBase}/api/rooms/${editingRoomId}`, body);
         alert("Room updated successfully!");
       } else {
-        await axios.post("http://localhost:3000/api/rooms", body);
+        await axios.post(`${_apiBase}/api/rooms`, body);
         alert("Room added successfully!");
       }
       setShowForm(false);

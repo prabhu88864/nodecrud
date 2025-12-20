@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
-const USER_PROFILE_API = "http://localhost:3000/api/userProfile";
-const API_BASE = "http://localhost:3000";
+// build api base from BASE_URL (trim trailing slash)
+const _apiBase = (BASE_URL || "").replace(/\/+$/, "");
+const USER_PROFILE_API = `${_apiBase}/api/userProfile`;
 
 function buildFullUrl(path) {
   if (!path) return "";
   if (path.startsWith("http")) return path;
-  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${_apiBase}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export default function UserProfileList() {

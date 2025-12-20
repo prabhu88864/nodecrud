@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useMemo } from "react";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
-const PAYMENTS_API_URL = "http://localhost:3000/api/payments";
-const USER_SEARCH_API_URL =
-  "http://localhost:3000/api/userprofile/search-users";
-const RENT_PREVIEW_API_BASE = "http://localhost:3000/api/userProfile";
-const OVERDUE_API_URL =
-  "http://localhost:3000/api/payments/overdue-users";
+// Build API endpoints from BASE_URL while avoiding duplicate slashes
+const _apiBase = (BASE_URL || "").replace(/\/+$/, "");
+const PAYMENTS_API_URL = `${_apiBase}/api/payments`;
+const USER_SEARCH_API_URL = `${_apiBase}/api/userprofile/search-users`;
+const RENT_PREVIEW_API_BASE = `${_apiBase}/api/userProfile`;
+const OVERDUE_API_URL = `${_apiBase}/api/payments/overdue-users`;
 
 function formatDateTime(dt) {
   if (!dt) return "-";

@@ -2,6 +2,7 @@ import React from "react";
 import { useSelector, useDispatch } from "react-redux"; 
 import { useNavigate } from "react-router-dom";
 import { logoutUser } from "../redux/actions/loginAction";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
 export default function Dashboard({
   vacantRooms = 0,

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
 const s = {
   page: {
@@ -195,13 +195,13 @@ export default function AvailableBedsReport() {
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
 
-  const API_BASE = "http://localhost:3000";
+  const API_BASE = BASE_URL;
 
   const fetchBeds = async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.get(`${API_BASE}/api/allocation/available-beds`);
+      const res = await axios.get(`${API_BASE}api/allocation/available-beds`);
       const data = res.data || [];
       setBeds(data);
       setFilteredBeds(data); // Initialize filtered list

@@ -1,7 +1,9 @@
 // Remaingdues.js
 import React, { useEffect, useState } from "react";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
-const OVERDUE_API = "http://localhost:3000/api/payments/overdue-users";
+// Build overdue API URL from BASE_URL while avoiding duplicate slashes
+const OVERDUE_API = (BASE_URL || "").replace(/\/+$/, "") + "/api/payments/overdue-users";
 
 function formatDate(v) {
   if (!v) return "-";

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useLocation } from "react-router-dom";
+import { BASE_URL } from "../API/Constants";
 
 export default function RegisterUser() {
   const navigate = useNavigate();
   const location = useLocation();
   const editData = location.state?.editData || null;
-  const API_BASE = "http://localhost:3000";
+  // normalize BASE_URL to avoid duplicate/missing slashes
+  const _apiBase = (BASE_URL || "").replace(/\/+$/, "");
 
   const [form, setForm] = useState({
     fullName: "",
@@ -43,7 +45,7 @@ export default function RegisterUser() {
   const fetchFloors = async () => {
     setFloorsLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/allocation/available-floors`);
+  const res = await axios.get(`${_apiBase}/api/allocation/available-floors`);
       setAvailableFloors(res.data || []);
     } catch (err) {
       alert("Failed to load floors");
@@ -59,7 +61,7 @@ export default function RegisterUser() {
     }
     setBlocksLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/allocation/available-blocks`, {
+  const res = await axios.get(`${_apiBase}/api/allocation/available-blocks`, {
         params: { floor: floorValue },
       });
       setAvailableBlocks(res.data || []);
@@ -77,7 +79,7 @@ export default function RegisterUser() {
     }
     setRoomsLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/allocation/available-rooms`, {
+  const res = await axios.get(`${_apiBase}/api/allocation/available-rooms`, {
         params: { floor: floorValue, block: blockValue },
       });
       let rooms = res.data || [];
@@ -106,7 +108,7 @@ export default function RegisterUser() {
     }
     setBedsLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/allocation/available-beds`, {
+  const res = await axios.get(`${_apiBase}api/allocation/available-beds`, {
         params: { roomId },
       });
       let beds = res.data || [];
@@ -249,7 +251,7 @@ export default function RegisterUser() {
       if (form.userImage) fd.append("userImage", form.userImage);
 
       if (editData) {
-        await axios.put(`${API_BASE}/api/userprofile/${editData._id}`, fd);
+  await axios.put(`${_apiBase}/api/userprofile/${editData._id}`, fd);
         alert("User updated successfully!");
       } else {
         if (!form.floor || !form.block || !form.roomId || !form.bedId) {
@@ -257,7 +259,7 @@ export default function RegisterUser() {
           setLoading(false);
           return;
         }
-        await axios.post(`${API_BASE}/api/userprofile`, fd);
+  await axios.post(`${_apiBase}/api/userprofile`, fd);
         alert("User registered successfully!");
       }
       navigate("/dashboard");

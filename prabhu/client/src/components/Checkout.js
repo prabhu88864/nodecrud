@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate, useLocation } from "react-router-dom";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
 export default function CheckoutPage() {
   const navigate = useNavigate();
@@ -9,7 +10,7 @@ export default function CheckoutPage() {
   // Data passed from UserProfileList -> goToCheckout(user)
   const checkoutUser = location.state?.checkoutUser || null;
 
-  const API_BASE = "http://localhost:3000";
+  const API_BASE = BASE_URL;
 
   const [isActive, setIsActive] = useState("false"); // for checkout usually inactive
   const [exitDate, setExitDate] = useState("");

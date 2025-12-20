@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
-const PAYMENTS_API_URL = "http://localhost:3000/api/payments";
+
+const PAYMENTS_API_URL = (BASE_URL || "").replace(/\/+$/, "") + "/api/payments";
 
 function formatDateTime(dt) {
   if (!dt) return "-";

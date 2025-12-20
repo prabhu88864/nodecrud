@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useMemo } from "react";
+import { STATUS_CODE, BASE_URL } from "../API/Constants";
 
-const SUMMARY_API_URL = "http://localhost:3000/api/payments/summary-report";
+// build API base from BASE_URL, trimming trailing slash
+const _apiBase = (BASE_URL || "").replace(/\/+$/, "");
+const SUMMARY_API_URL = `${_apiBase}/api/payments/summary-report`;
 
 // Each column is a 2-month band.
 // The *first* month in the pair is what we use for coverage logic.
