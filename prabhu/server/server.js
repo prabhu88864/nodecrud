@@ -36,10 +36,10 @@ app.use("/api/allocation", allocationRoutes);
 app.use("/api/payments", paymentsRoutes);
 
 /* Serve React */
-const buildPath = path.join(__dirname, "client", "build");
+const buildPath = path.join(__dirname, '../client/build');
 app.use(express.static(buildPath));
 
-app.use((req, res) => {
+app.get(/.*/, (req, res) => {
   res.sendFile(path.join(buildPath, 'index.html'));
 });
 
